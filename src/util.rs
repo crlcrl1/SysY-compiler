@@ -1,20 +1,14 @@
 pub mod args;
+pub mod logger;
 
 use crate::ast::{ConstDef, FuncDef, VarDef};
-use std::collections::HashMap;
-use std::process::exit;
+use std::collections::HashSet;
 
 /// An identifier name.
 #[derive(Debug, PartialEq, Clone)]
 pub struct IdentifierName {
     pub name: String,
     pub block_id: i32,
-}
-
-pub enum IdentifierType {
-    Variable,
-    Constant,
-    Function,
 }
 
 /// The type of identifier and its information.
@@ -28,13 +22,13 @@ pub enum Identifier {
 /// A table of identifiers.
 #[derive(Debug, Clone)]
 pub struct IdentifierTable {
-    pub table: HashMap<Identifier, Identifier>,
+    pub table: HashSet<Identifier>,
 }
 
 impl IdentifierTable {
     pub fn new() -> Self {
         IdentifierTable {
-            table: HashMap::new(),
+            table: HashSet::new(),
         }
     }
 }
@@ -65,9 +59,4 @@ impl BlockIdGenerator {
     pub fn pop(&mut self) {
         self.id_stack.pop();
     }
-}
-
-pub fn show_error(error: &str, exit_code: i32) -> ! {
-    eprintln!("\x1b[31mError: {}\x1b[0m", error);
-    exit(exit_code)
 }

@@ -12,9 +12,14 @@ match {
     _
 }
 
-pub Number: i32 = <s:r"-?[0-9]+"> =>? i32::from_str(s).map_err(|_| ParseError::User {
-    error: "number out of range"
-});
+pub Number: i32 = {
+    <s: r"-?[1-9][0-9]*"> =>? i32::from_str(s).map_err(|_| ParseError::User {
+        error: "number out of range"
+    }),
+    <s: r"-?0[0-7]*"> => i32::from_str_radix(s, 8).unwrap(),
+    <s: r"0[xX][0-9a-fA-F]+"> => i32::from_str_radix(&s[2..], 16).unwrap(),
+    <s: r"-0[xX][0-9a-fA-F]+"> => -i32::from_str_radix(&s[3..], 16).unwrap(),
+};
 
 UnaryOp: UnaryOp = {
     "+" => UnaryOp::Pos,

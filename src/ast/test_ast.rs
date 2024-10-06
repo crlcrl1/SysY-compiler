@@ -12,7 +12,11 @@ fn test_number() {
     assert_eq!(number_parser.parse(&mut generator, "123"), Ok(123));
     assert_eq!(number_parser.parse(&mut generator, "-123"), Ok(-123));
     assert_eq!(number_parser.parse(&mut generator, "0"), Ok(0));
-    assert_eq!(number_parser.parse(&mut generator, "000"), Ok(0));
+    assert_eq!(number_parser.parse(&mut generator, "010"), Ok(8));
+    assert_eq!(number_parser.parse(&mut generator, "-010"), Ok(-8));
+    assert_eq!(number_parser.parse(&mut generator, "0x10"), Ok(16));
+    assert_eq!(number_parser.parse(&mut generator, "-0x10"), Ok(-16));
+
     assert_eq!(
         number_parser.parse(&mut generator, "66666666666666666666"),
         Err(ParseError::User {
@@ -94,7 +98,7 @@ fn test_comp_unit() {
     void f() {
         int c = 30;
     }
-    
+
     int g() {
         return 0;
     }

@@ -1,4 +1,4 @@
-use crate::util::show_error;
+use crate::util::logger::show_error;
 use std::env::args;
 use std::process::exit;
 
