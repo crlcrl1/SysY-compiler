@@ -1,0 +1,345 @@
+use crate::ast::*;
+use lalrpop_util::ParseError;
+use std::str::FromStr;
+use crate::util::{BlockIdGenerator, IdentifierName};
+
+grammar<'table>(generator: &'table mut BlockIdGenerator);
+
+match {
+    r"\s*" => {},
+    r"//[^\n\r]*[\n\r]*" => {},
+    r"/\*[^*]*\*+(?:[^/*][^*]*\*+)*/" => {},
+    _
+}
+
+pub Number: i32 = <s:r"-?[0-9]+"> =>? i32::from_str(s).map_err(|_| ParseError::User {
+    error: "number out of range"
+});
+
+UnaryOp: UnaryOp = {
+    "+" => UnaryOp::Pos,
+    "-" => UnaryOp::Neg,
+    "!" => UnaryOp::Not,
+};
+
+pub Ident: IdentifierName = {
+    <s:r"[a-zA-Z][a-zA-Z0-9]*"> => IdentifierName {
+        name: s.to_string(),
+        block_id: generator.get_current_id(),
+    },
+};
+
+pub CompUnit: CompUnit = {
+    <s: Decl> => CompUnit {
+        items: vec![GlobalItem::Decl(s)],
+    },
+    <s: FuncDef> => CompUnit {
+        items: vec![GlobalItem::FuncDef(s)],
+    },
+    <mut c: CompUnit> <s: Decl> => CompUnit {
+        items: { c.items.push(GlobalItem::Decl(s)); c.items },
+    },
+    <mut c: CompUnit> <s: FuncDef> => CompUnit {
+        items: { c.items.push(GlobalItem::FuncDef(s)); c.items },
+    },
+};
+
+Decl: Decl = {
+    <s: ConstDecl> => Decl::ConstDecl(s),
+    <s: VarDecl> => Decl::VarDecl(s),
+};
+
+DeclHead: (DataType, IdentifierName) = {
+    <t: DataType> <s: Ident> => (t, s),
+};
+
+DataType: DataType = {
+    "void" => DataType::Void,
+    "int" => DataType::Int,
+};
+
+FuncDef: FuncDef = {
+    <h: DeclHead> "(" <p: FuncFParams> ")" <b: Block> => FuncDef {
+        name: h.1.name,
+        ret_type: h.0,
+        params: p,
+        body: b,
+    },
+};
+
+FuncFParam: FuncFParam = {
+    "int" <s: Ident> => FuncFParam::NormalFParam(NormalFParam{
+        name: s.name,
+    }),
+
+    "int" <s: Ident> "[" "]" <a_shape: ConstArrayShape> => FuncFParam::ArrayFParam(ArrayFParam{
+        name: s.name,
+        placeholder: true,
+        shape: a_shape,
+    }),
+
+    "int" <s: Ident> <a_shape: ConstArrayShape> => FuncFParam::ArrayFParam(ArrayFParam{
+        name: s.name,
+        placeholder: false,
+        shape: a_shape,
+    }),
+};
+
+FuncFParams = Comma<FuncFParam>;
+
+BlockStart: i32 = {
+    "{" => generator.generate()
+};
+
+BlockEnd: () = {
+    "}" => generator.pop()
+};
+
+Block: Block = {
+    BlockStart <v: BlockItem*> BlockEnd => {
+        Block {
+            items: v,
+            id: generator.get_current_id(),
+        }
+    },
+};
+
+BlockItem: BlockItem = {
+    <d: Decl> => BlockItem::Decl(d),
+    <s: Stmt> => BlockItem::Stmt(s),
+};
+
+Comma<T>: Vec<T> = {
+    <mut v:(<T> ",")*> <e:T?> => match e {
+        None => v,
+        Some(e) => {
+            v.push(e);
+            v
+        }
+    }
+};
+
+BeginComma<T>: Vec<T> = {
+    <mut v:("," <T>)*> <e:T?> => match e {
+        None => v,
+        Some(e) => {
+            v.push(e);
+            v
+        }
+    }
+};
+
+ConstArrayShape: Vec<ConstExpr> = {
+    <v: ("[" <ConstExpr> "]")+> => v
+};
+
+ArrayShape: Vec<Expr> = {
+    <v: ("[" <Expr> "]")+> => v
+};
+
+ConstDecl: Vec<ConstDef> = {
+    "const" "int" <v: Comma<ConstDef>> ";" => v
+};
+
+VarInit: Option<Expr> = {
+    "=" <v: Expr> => Some(v),
+    => None,
+};
+
+ArrayInit: Option<ExprArray> = {
+    "=" <v: ExprArray> => Some(v),
+    => None,
+};
+
+VarDecl: Vec<VarDef> = {
+    <h: DeclHead> <init: VarInit> <mut v: BeginComma<VarDef>> ";" =>? match h.0 {
+        DataType::Void => Err(ParseError::User {
+            error: "void variable is not allowed"
+        }),
+        _ => {
+            let first = VarDef::NormalVarDef(NormalVarDef{
+                name: h.1.name,
+                value: init,
+            });
+            v.insert(0, first);
+            Ok(v)
+        },
+    },
+
+    <h: DeclHead> <a_shape: ConstArrayShape> <ar: ArrayInit> <mut v: BeginComma<VarDef>> ";" =>? match h.0 {
+        DataType::Void => Err(ParseError::User {
+            error: "void array is not allowed"
+        }),
+        _ => {
+            let first = VarDef::ArrayVarDef(ArrayVarDef{
+                name: h.1.name,
+                shape: a_shape,
+                values: ar,
+            });
+            v.insert(0, first);
+            Ok(v)
+        },
+    },
+};
+
+ConstDef: ConstDef = {
+    <s: Ident> "=" <v: ConstExpr> => ConstDef::NormalConstDef(NormalConstDef{
+        name: s.name,
+        value: v,
+    }),
+
+    <s: Ident> <a_shape: ConstArrayShape> "=" <a: ConstArray> => ConstDef::ArrayConstDef(ArrayConstDef{
+        name: s.name,
+        shape: a_shape,
+        values: a,
+    }),
+};
+
+ConstExpr: ConstExpr = {
+    <a: AddExpr> => ConstExpr(Box::new(a)),
+}
+
+ConstArray: ConstArray = {
+    "{" <v: Comma<ConstArray>> "}" => ConstArray::Array(v),
+    <v: ConstExpr> => ConstArray::Val(v),
+};
+
+VarDef: VarDef = {
+    <s: Ident> <init: VarInit> => VarDef::NormalVarDef(NormalVarDef{
+        name: s.name,
+        value: init,
+    }),
+
+    <s: Ident> <a_shape: ConstArrayShape> <init: ArrayInit> => VarDef::ArrayVarDef(ArrayVarDef{
+        name: s.name,
+        shape: a_shape,
+        values: init,
+    }),
+};
+
+pub Expr: Expr = {
+    <a: AddExpr> => Expr(Box::new(a)),
+};
+
+ExprArray: ExprArray = {
+    "{" <v: Comma<ExprArray>> "}" => ExprArray::Array(v),
+    <v: Expr> => ExprArray::Val(v),
+};
+
+Stmt: Stmt = {
+    #[precedence(level="0")]
+    ";" => Stmt::Empty,
+    #[precedence(level="0")]
+    <s: LVal> "=" <e: Expr> ";" => Stmt::Assign(Assign {
+        target: s,value: e
+    }),
+
+    #[precedence(level="0")]
+    <e: Expr> ";" => Stmt::Expr(e),
+
+    #[precedence(level="0")]
+    "if" "(" <c: LOrExpr> ")" <t: Stmt> "else" <e: Stmt> => Stmt::If(If {
+        cond: c,
+        then_stmt: Box::new(t),
+        else_stmt: Some(Box::new(e)),
+    }),
+
+    #[precedence(level="1")]
+    "if" "(" <c: LOrExpr> ")" <t: Stmt> => Stmt::If(If {
+        cond: c,
+        then_stmt: Box::new(t),
+        else_stmt: None,
+    }),
+
+    #[precedence(level="0")]
+    "while" "(" <c: LOrExpr> ")" <t: Stmt> => Stmt::While(While {
+        cond: c,
+        body: Box::new(t),
+    }),
+    #[precedence(level="0")]
+    "break" ";" => Stmt::Break,
+    #[precedence(level="0")]
+    "continue" ";" => Stmt::Continue,
+    #[precedence(level="0")]
+    "return" <e: Expr?> ";" => Stmt::Return(e),
+};
+
+LVal: LVal = {
+    <s: Ident> => LVal::Var(s.name),
+    <s: Ident> <shape: ArrayShape> => LVal::ArrayElem(ArrayElem {
+        name: s.name,
+        indices: shape,
+    }),
+};
+
+PrimaryExpr: PrimaryExpr = {
+    <s: Number> => PrimaryExpr::Number(s),
+    <s: LVal> => PrimaryExpr::LVal(s),
+    "(" <e: Expr> ")" => PrimaryExpr::Expr(e),
+};
+
+AddOp: AddOp = {
+    "+" => AddOp::Add,
+    "-" => AddOp::Sub,
+};
+
+MulOp: MulOp = {
+    "*" => MulOp::Mul,
+    "/" => MulOp::Div,
+    "%" => MulOp::Mod,
+};
+
+AddExpr: AddExpr = {
+    <m: MulExpr> => AddExpr::MulExpr(m),
+    <a: AddExpr> <op: AddOp> <m: MulExpr> => AddExpr::Add(Box::new(a), op, Box::new(m)),
+};
+
+MulExpr: MulExpr = {
+    <u: UnaryExpr> => MulExpr::UnaryExpr(u),
+    <m: MulExpr> <op: MulOp> <u: UnaryExpr> => MulExpr::Mul(Box::new(m), op, Box::new(u)),
+};
+
+UnaryExpr: UnaryExpr = {
+    <p: PrimaryExpr> => UnaryExpr::PrimaryExpr(p),
+    <op: UnaryOp> <u: UnaryExpr> => UnaryExpr::Unary(op, Box::new(u)),
+    <f: FuncCall> => UnaryExpr::FuncCall(f),
+};
+
+FuncCall: FuncCall = {
+    <s: Ident> "(" <p: Comma<Expr>> ")" => FuncCall {
+        name: s.name,
+        args: p,
+    },
+};
+
+LOrExpr: LOrExpr = {
+    <s: LAndExpr> => LOrExpr::LAndExpr(s),
+    <l: LOrExpr> "||" <s: LAndExpr> => LOrExpr::Or(Box::new(l), Box::new(s)),
+};
+
+LAndExpr: LAndExpr = {
+    <e: EqExpr> => LAndExpr::EqExpr(e),
+    <l: LAndExpr> "&&" <e: EqExpr> => LAndExpr::And(Box::new(l), Box::new(e)),
+};
+
+EqExpr: EqExpr = {
+    <r: RelExpr> => EqExpr::RelExpr(r),
+    <l: EqExpr> <op: EqOp> <r: RelExpr> => EqExpr::Eq(Box::new(l), op, Box::new(r)),
+};
+
+EqOp: EqOp = {
+    "==" => EqOp::Eq,
+    "!=" => EqOp::Ne,
+};
+
+RelOp: RelOp = {
+    "<" => RelOp::Lt,
+    "<=" => RelOp::Le,
+    ">" => RelOp::Gt,
+    ">=" => RelOp::Ge,
+};
+
+RelExpr: RelExpr = {
+    <a: AddExpr> => RelExpr::AddExpr(a),
+    <l: RelExpr> <op: RelOp> <a: AddExpr> => RelExpr::Rel(Box::new(l), op, Box::new(a)),
+};

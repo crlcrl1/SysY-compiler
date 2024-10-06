@@ -2,10 +2,14 @@
 name = "compiler"
 version = "0.1.0"
 edition = "2021"
+license = "Apache-2.0"
+authors = ["crlcrl1"]
+repository = "https://github.com/crlcrl1/SysY-compiler"
+description = "A compiler for SysY language"
 build = "build.rs"
 
 [dependencies]
 lalrpop-util = { version = "0.22.0", features = ["lexer", "unicode"] }
 
 [build-dependencies]
-lalrpop = { version = "0.22.0", features = ["lexer", "unicode"] }
+lalrpop = "0.22.0"

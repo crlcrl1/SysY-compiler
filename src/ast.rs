@@ -1,6 +1,6 @@
 #[derive(Debug, PartialEq, Clone)]
 pub struct CompUnit {
-    items: Vec<GlobalItem>,
+    pub items: Vec<GlobalItem>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -26,20 +26,20 @@ pub enum ConstDef {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct NormalConstDef {
-    name: String,
-    value: ConstExpr,
+    pub name: String,
+    pub value: ConstExpr,
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct ArrayConstDef {
-    name: String,
-    shape: Vec<ConstExpr>,
-    values: ConstArray,
+    pub name: String,
+    pub shape: Vec<ConstExpr>,
+    pub values: ConstArray,
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum ConstArray {
-    Val(Vec<i32>),
+    Val(ConstExpr),
     Array(Vec<ConstArray>),
 }
 
@@ -51,15 +51,15 @@ pub enum VarDef {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct NormalVarDef {
-    name: String,
-    value: Option<Expr>,
+    pub name: String,
+    pub value: Option<Expr>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct ArrayVarDef {
-    name: String,
-    shape: Vec<ConstDef>,
-    values: Option<ExprArray>,
+    pub name: String,
+    pub shape: Vec<ConstExpr>,
+    pub values: Option<ExprArray>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -69,14 +69,14 @@ pub enum ExprArray {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct Expr(Box<AddExpr>);
+pub struct Expr(pub Box<AddExpr>);
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct FuncDef {
-    name: String,
-    params: Vec<FuncFParam>,
-    ret_type: FuncType,
-    body: Block,
+    pub name: String,
+    pub params: Vec<FuncFParam>,
+    pub ret_type: DataType,
+    pub body: Block,
 }
 
 /// Represent function parameter in declaration.
@@ -88,26 +88,27 @@ pub enum FuncFParam {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct NormalFParam {
-    name: String,
+    pub name: String,
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct ArrayFParam {
-    name: String,
+    pub name: String,
     /// Whether the array has a placeholder. For example, `int a[]` has a placeholder.
-    placeholder: bool,
-    shape: Vec<i32>,
+    pub placeholder: bool,
+    pub shape: Vec<ConstExpr>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum FuncType {
+pub enum DataType {
     Void,
     Int,
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Block {
-    items: Vec<BlockItem>,
+    pub id: i32,
+    pub items: Vec<BlockItem>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -123,15 +124,16 @@ pub enum Stmt {
     Block(Block),
     If(If),
     While(While),
-    Return(Return),
+    Return(Option<Expr>),
     Break,
     Continue,
+    Empty,
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Assign {
-    target: LVal,
-    value: Expr,
+    pub target: LVal,
+    pub value: Expr,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -142,26 +144,21 @@ pub enum LVal {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct ArrayElem {
-    name: String,
-    indices: Vec<Expr>,
+    pub name: String,
+    pub indices: Vec<Expr>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct If {
-    cond: LOrExpr,
-    then_stmt: Box<Stmt>,
-    else_stmt: Option<Box<Stmt>>,
+    pub cond: LOrExpr,
+    pub then_stmt: Box<Stmt>,
+    pub else_stmt: Option<Box<Stmt>>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct While {
-    cond: LOrExpr,
-    body: Box<Stmt>,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct Return {
-    return_value: Option<Expr>,
+    pub cond: LOrExpr,
+    pub body: Box<Stmt>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -227,10 +224,14 @@ pub enum MulExpr {
     Mul(Box<MulExpr>, MulOp, Box<UnaryExpr>),
 }
 
+/// Unary operator.
 #[derive(Debug, PartialEq, Clone)]
 pub enum UnaryOp {
+    /// Positive(+).
     Pos,
+    /// Negative(-).
     Neg,
+    /// Logical not(!).
     Not,
 }
 
@@ -250,9 +251,12 @@ pub enum PrimaryExpr {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct FuncCall {
-    name: String,
-    args: Vec<Expr>,
+    pub name: String,
+    pub args: Vec<Expr>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct ConstExpr(Box<AddExpr>);
+pub struct ConstExpr(pub Box<AddExpr>);
+
+#[cfg(test)]
+mod test_ast;
