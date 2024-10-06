@@ -1,5 +1,8 @@
+pub mod args;
+
 use crate::ast::{ConstDef, FuncDef, VarDef};
 use std::collections::HashMap;
+use std::process::exit;
 
 /// An identifier name.
 #[derive(Debug, PartialEq, Clone)]
@@ -62,4 +65,9 @@ impl BlockIdGenerator {
     pub fn pop(&mut self) {
         self.id_stack.pop();
     }
+}
+
+pub fn show_error(error: &str, exit_code: i32) -> ! {
+    eprintln!("\x1b[31mError: {}\x1b[0m", error);
+    exit(exit_code)
 }
