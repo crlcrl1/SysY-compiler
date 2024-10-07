@@ -49,8 +49,8 @@ fn test_identifier() {
     );
 
     assert!(identifier_parser.parse(&mut generator, "0a").is_err());
-    assert!(identifier_parser.parse(&mut generator, "_a").is_err());
-    assert!(identifier_parser.parse(&mut generator, "a_").is_err());
+    assert!(identifier_parser.parse(&mut generator, "_a").is_ok());
+    assert!(identifier_parser.parse(&mut generator, "a_").is_ok());
 }
 
 #[test]

@@ -53,7 +53,7 @@ impl BlockIdGenerator {
     }
 
     pub fn get_current_id(&self) -> i32 {
-        *self.id_stack.last().unwrap()
+        self.id_stack[self.id_stack.len() - 1]
     }
 
     pub fn pop(&mut self) {

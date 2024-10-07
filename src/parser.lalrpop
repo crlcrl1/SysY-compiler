@@ -28,7 +28,7 @@ UnaryOp: UnaryOp = {
 };
 
 pub Ident: IdentifierName = {
-    <s:r"[a-zA-Z][a-zA-Z0-9]*"> => IdentifierName {
+    <s:r"[_a-zA-Z][_a-zA-Z0-9]*"> => IdentifierName {
         name: s.to_string(),
         block_id: generator.get_current_id(),
     },
@@ -97,15 +97,17 @@ BlockStart: i32 = {
 };
 
 BlockEnd: () = {
-    "}" => generator.pop()
+    "}" => ()
 };
 
 Block: Block = {
     BlockStart <v: BlockItem*> BlockEnd => {
-        Block {
+        let b = Block {
             items: v,
             id: generator.get_current_id(),
-        }
+        };
+        generator.pop();
+        b
     },
 };
 
@@ -232,6 +234,8 @@ ExprArray: ExprArray = {
 };
 
 Stmt: Stmt = {
+    #[precedence(level="0")]
+    <b: Block> => Stmt::Block(b),
     #[precedence(level="0")]
     ";" => Stmt::Empty,
     #[precedence(level="0")]
