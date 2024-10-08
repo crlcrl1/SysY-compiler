@@ -1,4 +1,5 @@
 pub mod args;
+pub mod errors;
 pub mod logger;
 
 use crate::ast::{ConstDef, FuncDef, VarDef};

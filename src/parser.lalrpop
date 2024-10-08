@@ -13,12 +13,18 @@ match {
 }
 
 pub Number: i32 = {
-    <s: r"-?[1-9][0-9]*"> =>? i32::from_str(s).map_err(|_| ParseError::User {
-        error: "number out of range"
+    <l: @L> <s: r"-?[1-9][0-9]*"> <r: @R> =>? i32::from_str(s).map_err(|_| ParseError::User {
+        error: "Number is out of range",
     }),
-    <s: r"-?0[0-7]*"> => i32::from_str_radix(s, 8).unwrap(),
-    <s: r"0[xX][0-9a-fA-F]+"> => i32::from_str_radix(&s[2..], 16).unwrap(),
-    <s: r"-0[xX][0-9a-fA-F]+"> => -i32::from_str_radix(&s[3..], 16).unwrap(),
+    <l: @L> <s: r"-?0[0-7]*"> <r: @R> =>? i32::from_str_radix(s, 8).map_err(|_| ParseError::User {
+        error: "Number is out of range",
+    }),
+    <l: @L> <s: r"0[xX][0-9a-fA-F]+"> <r: @R> =>? i32::from_str_radix(&s[2..], 16).map_err(|_| ParseError::User {
+        error: "Number is out of range",
+    }),
+    <l: @L> <s: r"-0[xX][0-9a-fA-F]+"> <r: @R> =>? i32::from_str_radix(&s[3..], 16).map_err(|_| ParseError::User {
+        error: "Number is out of range",
+    }).map(|x| -x),
 };
 
 UnaryOp: UnaryOp = {
@@ -159,9 +165,9 @@ ArrayInit: Option<ExprArray> = {
 };
 
 VarDecl: Vec<VarDef> = {
-    <h: DeclHead> <init: VarInit> <mut v: BeginComma<VarDef>> ";" =>? match h.0 {
+    <left: @L> <h: DeclHead> <init: VarInit> <mut v: BeginComma<VarDef>> ";" <right: @R> =>? match h.0 {
         DataType::Void => Err(ParseError::User {
-            error: "void variable is not allowed"
+            error: "Invalid type void"
         }),
         _ => {
             let first = VarDef::NormalVarDef(NormalVarDef{
@@ -173,9 +179,9 @@ VarDecl: Vec<VarDef> = {
         },
     },
 
-    <h: DeclHead> <a_shape: ConstArrayShape> <ar: ArrayInit> <mut v: BeginComma<VarDef>> ";" =>? match h.0 {
+    <left: @L> <h: DeclHead> <a_shape: ConstArrayShape> <ar: ArrayInit> <mut v: BeginComma<VarDef>> ";"  <right: @R> =>? match h.0 {
         DataType::Void => Err(ParseError::User {
-            error: "void array is not allowed"
+            error: "Invalid type void"
         }),
         _ => {
             let first = VarDef::ArrayVarDef(ArrayVarDef{

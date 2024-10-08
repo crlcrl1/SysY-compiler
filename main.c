@@ -1,8 +1,5 @@
 int main() {
-    {
-        const int a = 1;
-        int b = 2;
-        int c = a + b;
+    while(1) {
+        // do nothing
     }
-    return 0;
 }

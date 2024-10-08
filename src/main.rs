@@ -1,4 +1,4 @@
-use crate::util::logger::show_error;
+use crate::util::logger::{show_error, show_parse_error};
 use lalrpop_util::lalrpop_mod;
 use std::fs;
 use util::args::Params;
@@ -12,7 +12,7 @@ fn main() {
     let params = Params::parse();
     let parser = parser::CompUnitParser::new();
     let mut generator = util::BlockIdGenerator::new();
-    let input = fs::read_to_string(params.input);
+    let input = fs::read_to_string(&params.input);
     if input.is_err() {
         show_error(
             &format!("Failed to read input file: {}", input.err().unwrap()),
@@ -26,7 +26,7 @@ fn main() {
             println!("{:#?}", result);
         }
         Err(e) => {
-            println!("{}", e);
+            show_parse_error(e, &input, &params.input);
         }
     }
 }
