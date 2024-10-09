@@ -1,17 +1,15 @@
-use crate::util::logger::{show_error, show_parse_error};
-use lalrpop_util::lalrpop_mod;
+use front::parser;
+use front::parser_context::ParserContext;
 use std::fs;
 use util::args::Params;
+use util::logger::{show_error, show_parse_error};
 
-mod ast;
+mod front;
 mod util;
-
-lalrpop_mod!(parser);
 
 fn main() {
     let params = Params::parse();
     let parser = parser::CompUnitParser::new();
-    let mut generator = util::BlockIdGenerator::new();
     let input = fs::read_to_string(&params.input);
     if input.is_err() {
         show_error(
@@ -20,13 +18,13 @@ fn main() {
         );
     }
     let input = input.unwrap();
-    let result = parser.parse(&mut generator, &input);
-    match result {
-        Ok(result) => {
-            println!("{:#?}", result);
-        }
+    let mut context = ParserContext::new(&params.input, &input);
+    let result = parser.parse(&mut context, &input);
+    let comp_unit = match result {
+        Ok(result) => result,
         Err(e) => {
             show_parse_error(e, &input, &params.input);
         }
-    }
+    };
+    println!("{:#?}", comp_unit);
 }

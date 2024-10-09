@@ -1,9 +1,11 @@
-use crate::ast::*;
+use crate::front::ast::*;
+use crate::front::parser_context::ParserContext;
+use crate::util::logger::show_highlighted_range;
 use lalrpop_util::ParseError;
 use std::str::FromStr;
-use crate::util::{BlockIdGenerator, IdentifierName};
+use std::process::exit;
 
-grammar<'table>(generator: &'table mut BlockIdGenerator);
+grammar<'a, 'b>(context: &'a mut ParserContext<'b>);
 
 match {
     r"\s*" => {},
@@ -13,18 +15,34 @@ match {
 }
 
 pub Number: i32 = {
-    <l: @L> <s: r"-?[1-9][0-9]*"> <r: @R> =>? i32::from_str(s).map_err(|_| ParseError::User {
-        error: "Number is out of range",
-    }),
-    <l: @L> <s: r"-?0[0-7]*"> <r: @R> =>? i32::from_str_radix(s, 8).map_err(|_| ParseError::User {
-        error: "Number is out of range",
-    }),
-    <l: @L> <s: r"0[xX][0-9a-fA-F]+"> <r: @R> =>? i32::from_str_radix(&s[2..], 16).map_err(|_| ParseError::User {
-        error: "Number is out of range",
-    }),
-    <l: @L> <s: r"-0[xX][0-9a-fA-F]+"> <r: @R> =>? i32::from_str_radix(&s[3..], 16).map_err(|_| ParseError::User {
-        error: "Number is out of range",
-    }).map(|x| -x),
+    <l: @L> <s: r"-?[1-9][0-9]*"> <r: @R> => match i32::from_str(s) {
+        Ok(v) => v,
+        Err(_) => {
+            show_highlighted_range(context.input, l, r, "Number is out of range", context.file_path);
+            exit(1)
+        },
+    },
+    <l: @L> <s: r"-?0[0-7]*"> <r: @R> => match i32::from_str_radix(s, 8) {
+        Ok(v) => v,
+        Err(_) => {
+            show_highlighted_range(context.input, l, r, "Number is out of range", context.file_path);
+            exit(1)
+        },
+    },
+    <l: @L> <s: r"0[xX][0-9a-fA-F]+"> <r: @R> => match i32::from_str_radix(&s[2..], 16) {
+        Ok(v) => v,
+        Err(_) => {
+            show_highlighted_range(context.input, l, r, "Number is out of range", context.file_path);
+            exit(1)
+        },
+    },
+    <l: @L> <s: r"-0[xX][0-9a-fA-F]+"> <r: @R> => match i32::from_str_radix(&s[3..], 16) {
+        Ok(v) => -v,
+        Err(_) => {
+            show_highlighted_range(context.input, l, r, "Number is out of range", context.file_path);
+            exit(1)
+        },
+    },
 };
 
 UnaryOp: UnaryOp = {
@@ -33,11 +51,8 @@ UnaryOp: UnaryOp = {
     "!" => UnaryOp::Not,
 };
 
-pub Ident: IdentifierName = {
-    <s:r"[_a-zA-Z][_a-zA-Z0-9]*"> => IdentifierName {
-        name: s.to_string(),
-        block_id: generator.get_current_id(),
-    },
+pub Ident: String = {
+    <s:r"[_a-zA-Z][_a-zA-Z0-9]*"> => s.to_string(),
 };
 
 pub CompUnit: CompUnit = {
@@ -60,7 +75,7 @@ Decl: Decl = {
     <s: VarDecl> => Decl::VarDecl(s),
 };
 
-DeclHead: (DataType, IdentifierName) = {
+DeclHead: (DataType, String) = {
     <t: DataType> <s: Ident> => (t, s),
 };
 
@@ -71,7 +86,7 @@ DataType: DataType = {
 
 FuncDef: FuncDef = {
     <h: DeclHead> "(" <p: FuncFParams> ")" <b: Block> => FuncDef {
-        name: h.1.name,
+        name: h.1,
         ret_type: h.0,
         params: p,
         body: b,
@@ -80,17 +95,17 @@ FuncDef: FuncDef = {
 
 FuncFParam: FuncFParam = {
     "int" <s: Ident> => FuncFParam::NormalFParam(NormalFParam{
-        name: s.name,
+        name: s,
     }),
 
     "int" <s: Ident> "[" "]" <a_shape: ConstArrayShape> => FuncFParam::ArrayFParam(ArrayFParam{
-        name: s.name,
+        name: s,
         placeholder: true,
         shape: a_shape,
     }),
 
     "int" <s: Ident> <a_shape: ConstArrayShape> => FuncFParam::ArrayFParam(ArrayFParam{
-        name: s.name,
+        name: s,
         placeholder: false,
         shape: a_shape,
     }),
@@ -99,7 +114,7 @@ FuncFParam: FuncFParam = {
 FuncFParams = Comma<FuncFParam>;
 
 BlockStart: i32 = {
-    "{" => generator.generate()
+    "{" => context.generator.generate()
 };
 
 BlockEnd: () = {
@@ -110,9 +125,9 @@ Block: Block = {
     BlockStart <v: BlockItem*> BlockEnd => {
         let b = Block {
             items: v,
-            id: generator.get_current_id(),
+            id: context.generator.get_current_id(),
         };
-        generator.pop();
+        context.generator.pop();
         b
     },
 };
@@ -165,44 +180,46 @@ ArrayInit: Option<ExprArray> = {
 };
 
 VarDecl: Vec<VarDef> = {
-    <left: @L> <h: DeclHead> <init: VarInit> <mut v: BeginComma<VarDef>> ";" <right: @R> =>? match h.0 {
-        DataType::Void => Err(ParseError::User {
-            error: "Invalid type void"
-        }),
+    <left: @L> <h: DeclHead> <right: @R> <init: VarInit> <mut v: BeginComma<VarDef>> ";"  => match h.0 {
+        DataType::Void => {
+            show_highlighted_range(context.input, left, right, "Invalid type void", context.file_path);
+            exit(1)
+        },
         _ => {
             let first = VarDef::NormalVarDef(NormalVarDef{
-                name: h.1.name,
+                name: h.1,
                 value: init,
             });
             v.insert(0, first);
-            Ok(v)
+            v
         },
     },
 
-    <left: @L> <h: DeclHead> <a_shape: ConstArrayShape> <ar: ArrayInit> <mut v: BeginComma<VarDef>> ";"  <right: @R> =>? match h.0 {
-        DataType::Void => Err(ParseError::User {
-            error: "Invalid type void"
-        }),
+    <left: @L> <h: DeclHead> <right: @R> <a_shape: ConstArrayShape> <ar: ArrayInit> <mut v: BeginComma<VarDef>> ";" => match h.0 {
+        DataType::Void => {
+            show_highlighted_range(context.input, left, right, "Invalid type void", context.file_path);
+            exit(1)
+        },
         _ => {
             let first = VarDef::ArrayVarDef(ArrayVarDef{
-                name: h.1.name,
+                name: h.1,
                 shape: a_shape,
                 values: ar,
             });
             v.insert(0, first);
-            Ok(v)
+            v
         },
     },
 };
 
 ConstDef: ConstDef = {
     <s: Ident> "=" <v: ConstExpr> => ConstDef::NormalConstDef(NormalConstDef{
-        name: s.name,
+        name: s,
         value: v,
     }),
 
     <s: Ident> <a_shape: ConstArrayShape> "=" <a: ConstArray> => ConstDef::ArrayConstDef(ArrayConstDef{
-        name: s.name,
+        name: s,
         shape: a_shape,
         values: a,
     }),
@@ -219,12 +236,12 @@ ConstArray: ConstArray = {
 
 VarDef: VarDef = {
     <s: Ident> <init: VarInit> => VarDef::NormalVarDef(NormalVarDef{
-        name: s.name,
+        name: s,
         value: init,
     }),
 
     <s: Ident> <a_shape: ConstArrayShape> <init: ArrayInit> => VarDef::ArrayVarDef(ArrayVarDef{
-        name: s.name,
+        name: s,
         shape: a_shape,
         values: init,
     }),
@@ -280,9 +297,9 @@ Stmt: Stmt = {
 };
 
 LVal: LVal = {
-    <s: Ident> => LVal::Var(s.name),
+    <s: Ident> => LVal::Var(s),
     <s: Ident> <shape: ArrayShape> => LVal::ArrayElem(ArrayElem {
-        name: s.name,
+        name: s,
         indices: shape,
     }),
 };
@@ -322,7 +339,7 @@ UnaryExpr: UnaryExpr = {
 
 FuncCall: FuncCall = {
     <s: Ident> "(" <p: Comma<Expr>> ")" => FuncCall {
-        name: s.name,
+        name: s,
         args: p,
     },
 };

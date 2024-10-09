@@ -65,11 +65,11 @@ fn show_error_line(
     line_no: usize,
     start_col: usize,
     end_col: usize,
-    heading_space: usize,
+    header_space: usize,
 ) {
     let line_no = line_no.to_string();
-    let space_no = if heading_space > line_no.len() {
-        heading_space - line_no.len()
+    let space_no = if header_space > line_no.len() {
+        header_space - line_no.len()
     } else {
         0
     };
@@ -82,7 +82,7 @@ fn show_error_line(
     );
     eprintln!(
         "{} {} {}{}",
-        " ".repeat(heading_space),
+        " ".repeat(header_space),
         "|".bright_cyan().bold(),
         " ".repeat(start_col - 1),
         "^".repeat(end_col - start_col).red().bold()
@@ -99,7 +99,7 @@ fn show_error_file(file_path: &str, line_no: usize, column: usize) {
     );
 }
 
-fn show_highlighted_position(input: &str, location: usize, message: &str, file_path: &str) {
+pub fn show_highlighted_position(input: &str, location: usize, message: &str, file_path: &str) {
     let (line_no, column) = get_position(input, location);
     let lines: Vec<&str> = input.split('\n').collect();
     let line = lines[line_no - 1];
@@ -110,7 +110,13 @@ fn show_highlighted_position(input: &str, location: usize, message: &str, file_p
     show_error_line(line, line_no, column, column + 1, line_no_width);
 }
 
-fn show_highlighted_range(input: &str, start: usize, end: usize, message: &str, file_path: &str) {
+pub fn show_highlighted_range(
+    input: &str,
+    start: usize,
+    end: usize,
+    message: &str,
+    file_path: &str,
+) {
     let (start_line, start_column) = get_position(input, start);
     let (end_line, end_column) = get_position(input, end);
     let lines: Vec<&str> = input.split('\n').collect();
@@ -120,7 +126,7 @@ fn show_highlighted_range(input: &str, start: usize, end: usize, message: &str, 
         let line = lines[start_line - 1];
         let line_no = start_line.to_string();
         let line_no_width = line_no.len();
-        eprintln!("{} {}", " ".repeat(line_no_width), "|".bright_cyan().bold(),);
+        eprintln!("{} {}", " ".repeat(line_no_width), "|".bright_cyan().bold());
         show_error_line(line, start_line, start_column, end_column, line_no_width);
     } else {
         let error_lines = &lines[start_line - 1..end_line];

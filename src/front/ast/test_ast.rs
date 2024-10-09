@@ -1,65 +1,52 @@
 use super::*;
+use crate::front::parser_context::ParserContext;
 use crate::parser;
-use crate::util::{BlockIdGenerator, IdentifierName};
-use lalrpop_util::ParseError;
 
 #[test]
 fn test_number() {
     let number_parser = parser::NumberParser::new();
 
-    let mut generator = BlockIdGenerator::new();
+    let context = ParserContext::new("", "");
 
-    assert_eq!(number_parser.parse(&mut generator, "123"), Ok(123));
-    assert_eq!(number_parser.parse(&mut generator, "-123"), Ok(-123));
-    assert_eq!(number_parser.parse(&mut generator, "0"), Ok(0));
-    assert_eq!(number_parser.parse(&mut generator, "010"), Ok(8));
-    assert_eq!(number_parser.parse(&mut generator, "-010"), Ok(-8));
-    assert_eq!(number_parser.parse(&mut generator, "0x10"), Ok(16));
-    assert_eq!(number_parser.parse(&mut generator, "-0x10"), Ok(-16));
+    assert_eq!(number_parser.parse(&mut context.clone(), "123"), Ok(123));
+    assert_eq!(number_parser.parse(&mut context.clone(), "-123"), Ok(-123));
+    assert_eq!(number_parser.parse(&mut context.clone(), "0"), Ok(0));
+    assert_eq!(number_parser.parse(&mut context.clone(), "010"), Ok(8));
+    assert_eq!(number_parser.parse(&mut context.clone(), "-010"), Ok(-8));
+    assert_eq!(number_parser.parse(&mut context.clone(), "0x10"), Ok(16));
+    assert_eq!(number_parser.parse(&mut context.clone(), "-0x10"), Ok(-16));
 
-    assert_eq!(
-        number_parser.parse(&mut generator, "66666666666666666666"),
-        Err(ParseError::User {
-            error: "number out of range"
-        })
-    );
-    assert!(number_parser.parse(&mut generator, "123a").is_err());
+    assert!(number_parser.parse(&mut context.clone(), "123a").is_err());
 }
 
 #[test]
 fn test_identifier() {
     let identifier_parser = parser::IdentParser::new();
 
-    let mut generator = BlockIdGenerator::new();
+    let context = ParserContext::new("", "");
 
     assert_eq!(
-        identifier_parser.parse(&mut generator, "a"),
-        Ok(IdentifierName {
-            name: "a".to_string(),
-            block_id: 0,
-        })
+        identifier_parser.parse(&mut context.clone(), "a"),
+        Ok("a".to_string())
     );
 
     assert_eq!(
-        identifier_parser.parse(&mut generator, "a0"),
-        Ok(IdentifierName {
-            name: "a0".to_string(),
-            block_id: 0,
-        })
+        identifier_parser.parse(&mut context.clone(), "a0"),
+        Ok("a0".to_string())
     );
 
-    assert!(identifier_parser.parse(&mut generator, "0a").is_err());
-    assert!(identifier_parser.parse(&mut generator, "_a").is_ok());
-    assert!(identifier_parser.parse(&mut generator, "a_").is_ok());
+    assert!(identifier_parser.parse(&mut context.clone(), "0a").is_err());
+    assert!(identifier_parser.parse(&mut context.clone(), "_a").is_ok());
+    assert!(identifier_parser.parse(&mut context.clone(), "a_").is_ok());
 }
 
 #[test]
 fn test_expr() {
     let expr_parser = parser::ExprParser::new();
-    let mut generator = BlockIdGenerator::new();
+    let mut context = ParserContext::new("", "");
 
     let input = "1 + 2 * -a";
-    let result = expr_parser.parse(&mut generator, input);
+    let result = expr_parser.parse(&mut context, input);
     assert_eq!(
         result,
         Ok(Expr(Box::new(AddExpr::Add(
@@ -86,7 +73,7 @@ fn test_expr() {
 #[test]
 fn test_comp_unit() {
     let comp_unit_parser = parser::CompUnitParser::new();
-    let mut generator = BlockIdGenerator::new();
+    let mut context = ParserContext::new("", "");
 
     let input = r#"
     // This is a comment.
@@ -104,7 +91,7 @@ fn test_comp_unit() {
     }
     "#;
 
-    let result = comp_unit_parser.parse(&mut generator, input);
+    let result = comp_unit_parser.parse(&mut context, input);
 
     assert!(result.is_ok());
     let result = result.unwrap();
