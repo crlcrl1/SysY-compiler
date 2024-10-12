@@ -1,5 +1,4 @@
-use crate::front::ast::{ConstDef, FuncDef, VarDef};
-use std::collections::HashSet;
+use crate::front::ident_table::IdentifierTable;
 
 #[derive(Clone)]
 pub struct BlockIdGenerator {
@@ -25,37 +24,12 @@ impl BlockIdGenerator {
         self.id_stack[self.id_stack.len() - 1]
     }
 
+    pub fn get_next_id(&self) -> i32 {
+        self.max_id + 1
+    }
+
     pub fn pop(&mut self) {
         self.id_stack.pop();
-    }
-}
-
-/// An identifier name.
-#[derive(Debug, PartialEq, Clone)]
-pub struct IdentifierName {
-    pub name: String,
-    pub block_id: i32,
-}
-
-/// The type of identifier and its information.
-#[derive(Debug, PartialEq, Clone)]
-pub enum Identifier {
-    Variable(VarDef),
-    Constant(ConstDef),
-    Function(FuncDef),
-}
-
-/// A table of identifiers.
-#[derive(Debug, Clone)]
-pub struct IdentifierTable {
-    pub table: HashSet<Identifier>,
-}
-
-impl IdentifierTable {
-    pub fn new() -> Self {
-        IdentifierTable {
-            table: HashSet::new(),
-        }
     }
 }
 

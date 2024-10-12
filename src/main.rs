@@ -1,5 +1,7 @@
+use crate::front::ir::generate_ir;
 use front::parser;
 use front::parser_context::ParserContext;
+use koopa::back::KoopaGenerator;
 use std::fs;
 use util::args::Params;
 use util::logger::{show_error, show_parse_error};
@@ -26,5 +28,9 @@ fn main() {
             show_parse_error(e, &input, &params.input);
         }
     };
-    println!("{:#?}", comp_unit);
+    let program = generate_ir(comp_unit, context.identifier_table);
+    KoopaGenerator::from_path(&params.output)
+        .unwrap()
+        .generate_on(&program)
+        .unwrap();
 }

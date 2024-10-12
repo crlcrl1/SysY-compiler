@@ -49,19 +49,19 @@ fn test_expr() {
     let result = expr_parser.parse(&mut context, input);
     assert_eq!(
         result,
-        Ok(Expr(Box::new(AddExpr::Add(
-            Box::new(AddExpr::MulExpr(MulExpr::UnaryExpr(
+        Ok(Expr(Rc::new(AddExpr::Add(
+            Rc::new(AddExpr::MulExpr(MulExpr::UnaryExpr(
                 UnaryExpr::PrimaryExpr(PrimaryExpr::Number(1))
             ))),
             AddOp::Add,
-            Box::new(MulExpr::Mul(
-                Box::new(MulExpr::UnaryExpr(UnaryExpr::PrimaryExpr(
+            Rc::new(MulExpr::Mul(
+                Rc::new(MulExpr::UnaryExpr(UnaryExpr::PrimaryExpr(
                     PrimaryExpr::Number(2)
                 ))),
                 MulOp::Mul,
-                Box::new(UnaryExpr::Unary(
+                Rc::new(UnaryExpr::Unary(
                     UnaryOp::Neg,
-                    Box::new(UnaryExpr::PrimaryExpr(PrimaryExpr::LVal(LVal::Var(
+                    Rc::new(UnaryExpr::PrimaryExpr(PrimaryExpr::LVal(LVal::Var(
                         "a".to_string()
                     ))))
                 ))
@@ -99,32 +99,34 @@ fn test_comp_unit() {
     let items = result.items;
     assert_eq!(
         items[0],
-        GlobalItem::Decl(Decl::VarDecl(vec![VarDef::NormalVarDef(NormalVarDef {
-            name: "a".to_string(),
-            value: Some(Expr(Box::new(AddExpr::MulExpr(MulExpr::UnaryExpr(
-                UnaryExpr::PrimaryExpr(PrimaryExpr::Number(10))
-            )))))
-        })]))
+        GlobalItem::Decl(Decl::VarDecl(vec![Rc::new(VarDef::NormalVarDef(
+            NormalVarDef {
+                name: "a".to_string(),
+                value: Some(Expr(Rc::new(AddExpr::MulExpr(MulExpr::UnaryExpr(
+                    UnaryExpr::PrimaryExpr(PrimaryExpr::Number(10))
+                )))))
+            }
+        ))]))
     );
     assert_eq!(
         items[1],
-        GlobalItem::Decl(Decl::ConstDecl(vec![ConstDef::ArrayConstDef(
+        GlobalItem::Decl(Decl::ConstDecl(vec![Rc::new(ConstDef::ArrayConstDef(
             ArrayConstDef {
                 name: "b".to_string(),
                 shape: vec![
-                    ConstExpr(Box::new(AddExpr::MulExpr(MulExpr::UnaryExpr(
+                    ConstExpr(Rc::new(AddExpr::MulExpr(MulExpr::UnaryExpr(
                         UnaryExpr::PrimaryExpr(PrimaryExpr::Number(10))
                     )))),
-                    ConstExpr(Box::new(AddExpr::MulExpr(MulExpr::UnaryExpr(
+                    ConstExpr(Rc::new(AddExpr::MulExpr(MulExpr::UnaryExpr(
                         UnaryExpr::PrimaryExpr(PrimaryExpr::Number(15))
                     ))))
                 ],
-                values: ConstArray::Array(vec![ConstArray::Val(ConstExpr(Box::new(
+                values: ConstArray::Array(vec![ConstArray::Val(ConstExpr(Rc::new(
                     AddExpr::MulExpr(MulExpr::UnaryExpr(UnaryExpr::PrimaryExpr(
                         PrimaryExpr::Number(1)
                     )))
                 )))]),
             }
-        )]))
+        ))]))
     );
 }

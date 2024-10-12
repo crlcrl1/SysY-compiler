@@ -1,9 +1,11 @@
 use crate::front::ast::*;
 use crate::front::parser_context::ParserContext;
-use crate::util::logger::show_highlighted_range;
+use crate::front::ident_table::Identifier;
+use crate::util::logger::show_error_range;
 use lalrpop_util::ParseError;
 use std::str::FromStr;
 use std::process::exit;
+use std::rc::Rc;
 
 grammar<'a, 'b>(context: &'a mut ParserContext<'b>);
 
@@ -18,28 +20,28 @@ pub Number: i32 = {
     <l: @L> <s: r"-?[1-9][0-9]*"> <r: @R> => match i32::from_str(s) {
         Ok(v) => v,
         Err(_) => {
-            show_highlighted_range(context.input, l, r, "Number is out of range", context.file_path);
+            show_error_range(context.input, l, r, "Number is out of range", context.file_path);
             exit(1)
         },
     },
     <l: @L> <s: r"-?0[0-7]*"> <r: @R> => match i32::from_str_radix(s, 8) {
         Ok(v) => v,
         Err(_) => {
-            show_highlighted_range(context.input, l, r, "Number is out of range", context.file_path);
+            show_error_range(context.input, l, r, "Number is out of range", context.file_path);
             exit(1)
         },
     },
     <l: @L> <s: r"0[xX][0-9a-fA-F]+"> <r: @R> => match i32::from_str_radix(&s[2..], 16) {
         Ok(v) => v,
         Err(_) => {
-            show_highlighted_range(context.input, l, r, "Number is out of range", context.file_path);
+            show_error_range(context.input, l, r, "Number is out of range", context.file_path);
             exit(1)
         },
     },
     <l: @L> <s: r"-0[xX][0-9a-fA-F]+"> <r: @R> => match i32::from_str_radix(&s[3..], 16) {
         Ok(v) => -v,
         Err(_) => {
-            show_highlighted_range(context.input, l, r, "Number is out of range", context.file_path);
+            show_error_range(context.input, l, r, "Number is out of range", context.file_path);
             exit(1)
         },
     },
@@ -75,8 +77,8 @@ Decl: Decl = {
     <s: VarDecl> => Decl::VarDecl(s),
 };
 
-DeclHead: (DataType, String) = {
-    <t: DataType> <s: Ident> => (t, s),
+DeclHead: (DataType, String, usize, usize) = {
+    <t: DataType> <l: @L> <s: Ident> <r: @R> => (t, s, l, r),
 };
 
 DataType: DataType = {
@@ -84,34 +86,52 @@ DataType: DataType = {
     "int" => DataType::Int,
 };
 
-FuncDef: FuncDef = {
-    <h: DeclHead> "(" <p: FuncFParams> ")" <b: Block> => FuncDef {
-        name: h.1,
-        ret_type: h.0,
-        params: p,
-        body: b,
+FuncDef: Rc<FuncDef> = {
+    <l: @L> <h: DeclHead> "(" <p: Comma<FuncFParam>> ")" <r: @R> <b: Block> => {
+        let def = FuncDef {
+            name: h.1,
+            ret_type: h.0,
+            params: p,
+            body: b,
+        };
+        let def = Rc::new(def);
+        context.identifier_table.insert(Identifier::from_function(def.clone(), (l, r)));
+        def
     },
 };
 
-FuncFParam: FuncFParam = {
-    "int" <s: Ident> => FuncFParam::NormalFParam(NormalFParam{
-        name: s,
-    }),
+FuncFParam: Rc<FuncFParam> = {
+    "int" <l: @L> <s: Ident> <r: @R> => {
+        let param = Rc::new(FuncFParam::NormalFParam(NormalFParam{
+            name: s,
+        }));
+        let scope = context.generator.get_next_id();
+        context.identifier_table.insert(Identifier::from_function_param(param.clone(), scope, (l, r)));
+        param
+    },
 
-    "int" <s: Ident> "[" "]" <a_shape: ConstArrayShape> => FuncFParam::ArrayFParam(ArrayFParam{
-        name: s,
-        placeholder: true,
-        shape: a_shape,
-    }),
+    "int" <l: @L> <s: Ident> "[" "]" <a_shape: ConstArrayShape> <r: @R> => {
+        let param = Rc::new(FuncFParam::ArrayFParam(ArrayFParam{
+            name: s,
+            placeholder: true,
+            shape: a_shape,
+        }));
+        let scope = context.generator.get_next_id();
+        context.identifier_table.insert(Identifier::from_function_param(param.clone(), scope, (l, r)));
+        param
+    },
 
-    "int" <s: Ident> <a_shape: ConstArrayShape> => FuncFParam::ArrayFParam(ArrayFParam{
-        name: s,
-        placeholder: false,
-        shape: a_shape,
-    }),
+    "int" <l: @L> <s: Ident> <a_shape: ConstArrayShape> <r: @R> => {
+        let param = Rc::new(FuncFParam::ArrayFParam(ArrayFParam{
+            name: s,
+            placeholder: false,
+            shape: a_shape,
+        }));
+        let scope = context.generator.get_next_id();
+        context.identifier_table.insert(Identifier::from_function_param(param.clone(), scope, (l, r)));
+        param
+    },
 };
-
-FuncFParams = Comma<FuncFParam>;
 
 BlockStart: i32 = {
     "{" => context.generator.generate()
@@ -165,8 +185,8 @@ ArrayShape: Vec<Expr> = {
     <v: ("[" <Expr> "]")+> => v
 };
 
-ConstDecl: Vec<ConstDef> = {
-    "const" "int" <v: Comma<ConstDef>> ";" => v
+ConstDecl: Vec<Rc<ConstDef>> = {
+    "const" "int" <v: Comma<ConstDef>> ";" => v,
 };
 
 VarInit: Option<Expr> = {
@@ -179,17 +199,19 @@ ArrayInit: Option<ExprArray> = {
     => None,
 };
 
-VarDecl: Vec<VarDef> = {
+VarDecl: Vec<Rc<VarDef>> = {
     <left: @L> <h: DeclHead> <right: @R> <init: VarInit> <mut v: BeginComma<VarDef>> ";"  => match h.0 {
         DataType::Void => {
-            show_highlighted_range(context.input, left, right, "Invalid type void", context.file_path);
+            show_error_range(context.input, left, right, "Invalid type void", context.file_path);
             exit(1)
         },
         _ => {
-            let first = VarDef::NormalVarDef(NormalVarDef{
+            let first = Rc::new(VarDef::NormalVarDef(NormalVarDef{
                 name: h.1,
                 value: init,
-            });
+            }));
+            let scope = context.generator.get_current_id();
+            context.identifier_table.insert(Identifier::from_variable(first.clone(), scope, (h.2, h.3)));
             v.insert(0, first);
             v
         },
@@ -197,36 +219,48 @@ VarDecl: Vec<VarDef> = {
 
     <left: @L> <h: DeclHead> <right: @R> <a_shape: ConstArrayShape> <ar: ArrayInit> <mut v: BeginComma<VarDef>> ";" => match h.0 {
         DataType::Void => {
-            show_highlighted_range(context.input, left, right, "Invalid type void", context.file_path);
+            show_error_range(context.input, left, right, "Invalid type void", context.file_path);
             exit(1)
         },
         _ => {
-            let first = VarDef::ArrayVarDef(ArrayVarDef{
+            let first = Rc::new(VarDef::ArrayVarDef(ArrayVarDef{
                 name: h.1,
                 shape: a_shape,
                 values: ar,
-            });
+            }));
+            let scope = context.generator.get_current_id();
+            context.identifier_table.insert(Identifier::from_variable(first.clone(), scope, (h.2, h.3)));
             v.insert(0, first);
             v
         },
     },
 };
 
-ConstDef: ConstDef = {
-    <s: Ident> "=" <v: ConstExpr> => ConstDef::NormalConstDef(NormalConstDef{
-        name: s,
-        value: v,
-    }),
+ConstDef: Rc<ConstDef> = {
+    <l: @L> <s: Ident> <r: @R> "=" <v: ConstExpr> => {
+        let def=Rc::new(ConstDef::NormalConstDef(NormalConstDef{
+            name: s,
+            value: v,
+        }));
+        let scope = context.generator.get_current_id();
+        context.identifier_table.insert(Identifier::from_constant(def.clone(), scope, (l, r)));
+        def
+    },
 
-    <s: Ident> <a_shape: ConstArrayShape> "=" <a: ConstArray> => ConstDef::ArrayConstDef(ArrayConstDef{
-        name: s,
-        shape: a_shape,
-        values: a,
-    }),
+    <l: @L> <s: Ident> <a_shape: ConstArrayShape> "=" <a: ConstArray>  <r: @R> => {
+        let def = Rc::new(ConstDef::ArrayConstDef(ArrayConstDef{
+            name: s,
+            shape: a_shape,
+            values: a,
+        }));
+        let scope = context.generator.get_current_id();
+        context.identifier_table.insert(Identifier::from_constant(def.clone(), scope, (l, r)));
+        def
+    },
 };
 
 ConstExpr: ConstExpr = {
-    <a: AddExpr> => ConstExpr(Box::new(a)),
+    <a: AddExpr> => ConstExpr(Rc::new(a)),
 }
 
 ConstArray: ConstArray = {
@@ -234,21 +268,31 @@ ConstArray: ConstArray = {
     <v: ConstExpr> => ConstArray::Val(v),
 };
 
-VarDef: VarDef = {
-    <s: Ident> <init: VarInit> => VarDef::NormalVarDef(NormalVarDef{
-        name: s,
-        value: init,
-    }),
+VarDef: Rc<VarDef> = {
+    <l: @L> <s: Ident> <r: @R> <init: VarInit> => {
+        let def = Rc::new(VarDef::NormalVarDef(NormalVarDef{
+            name: s,
+            value: init,
+        }));
+        let scope = context.generator.get_current_id();
+        context.identifier_table.insert(Identifier::from_variable(def.clone(), scope, (l, r)));
+        def
+    },
 
-    <s: Ident> <a_shape: ConstArrayShape> <init: ArrayInit> => VarDef::ArrayVarDef(ArrayVarDef{
-        name: s,
-        shape: a_shape,
-        values: init,
-    }),
+    <l: @L> <s: Ident> <r: @R> <a_shape: ConstArrayShape> <init: ArrayInit> => {
+        let def = Rc::new(VarDef::ArrayVarDef(ArrayVarDef{
+            name: s,
+            shape: a_shape,
+            values: init,
+        }));
+        let scope = context.generator.get_current_id();
+        context.identifier_table.insert(Identifier::from_variable(def.clone(), scope, (l, r)));
+        def
+    },
 };
 
 pub Expr: Expr = {
-    <a: AddExpr> => Expr(Box::new(a)),
+    <a: AddExpr> => Expr(Rc::new(a)),
 };
 
 ExprArray: ExprArray = {
@@ -272,21 +316,21 @@ Stmt: Stmt = {
     #[precedence(level="0")]
     "if" "(" <c: LOrExpr> ")" <t: Stmt> "else" <e: Stmt> => Stmt::If(If {
         cond: c,
-        then_stmt: Box::new(t),
-        else_stmt: Some(Box::new(e)),
+        then_stmt: Rc::new(t),
+        else_stmt: Some(Rc::new(e)),
     }),
 
     #[precedence(level="1")]
     "if" "(" <c: LOrExpr> ")" <t: Stmt> => Stmt::If(If {
         cond: c,
-        then_stmt: Box::new(t),
+        then_stmt: Rc::new(t),
         else_stmt: None,
     }),
 
     #[precedence(level="0")]
     "while" "(" <c: LOrExpr> ")" <t: Stmt> => Stmt::While(While {
         cond: c,
-        body: Box::new(t),
+        body: Rc::new(t),
     }),
     #[precedence(level="0")]
     "break" ";" => Stmt::Break,
@@ -323,17 +367,17 @@ MulOp: MulOp = {
 
 AddExpr: AddExpr = {
     <m: MulExpr> => AddExpr::MulExpr(m),
-    <a: AddExpr> <op: AddOp> <m: MulExpr> => AddExpr::Add(Box::new(a), op, Box::new(m)),
+    <a: AddExpr> <op: AddOp> <m: MulExpr> => AddExpr::Add(Rc::new(a), op, Rc::new(m)),
 };
 
 MulExpr: MulExpr = {
     <u: UnaryExpr> => MulExpr::UnaryExpr(u),
-    <m: MulExpr> <op: MulOp> <u: UnaryExpr> => MulExpr::Mul(Box::new(m), op, Box::new(u)),
+    <m: MulExpr> <op: MulOp> <u: UnaryExpr> => MulExpr::Mul(Rc::new(m), op, Rc::new(u)),
 };
 
 UnaryExpr: UnaryExpr = {
     <p: PrimaryExpr> => UnaryExpr::PrimaryExpr(p),
-    <op: UnaryOp> <u: UnaryExpr> => UnaryExpr::Unary(op, Box::new(u)),
+    <op: UnaryOp> <u: UnaryExpr> => UnaryExpr::Unary(op, Rc::new(u)),
     <f: FuncCall> => UnaryExpr::FuncCall(f),
 };
 
@@ -346,17 +390,17 @@ FuncCall: FuncCall = {
 
 LOrExpr: LOrExpr = {
     <s: LAndExpr> => LOrExpr::LAndExpr(s),
-    <l: LOrExpr> "||" <s: LAndExpr> => LOrExpr::Or(Box::new(l), Box::new(s)),
+    <l: LOrExpr> "||" <s: LAndExpr> => LOrExpr::Or(Rc::new(l), Rc::new(s)),
 };
 
 LAndExpr: LAndExpr = {
     <e: EqExpr> => LAndExpr::EqExpr(e),
-    <l: LAndExpr> "&&" <e: EqExpr> => LAndExpr::And(Box::new(l), Box::new(e)),
+    <l: LAndExpr> "&&" <e: EqExpr> => LAndExpr::And(Rc::new(l), Rc::new(e)),
 };
 
 EqExpr: EqExpr = {
     <r: RelExpr> => EqExpr::RelExpr(r),
-    <l: EqExpr> <op: EqOp> <r: RelExpr> => EqExpr::Eq(Box::new(l), op, Box::new(r)),
+    <l: EqExpr> <op: EqOp> <r: RelExpr> => EqExpr::Eq(Rc::new(l), op, Rc::new(r)),
 };
 
 EqOp: EqOp = {
@@ -373,5 +417,5 @@ RelOp: RelOp = {
 
 RelExpr: RelExpr = {
     <a: AddExpr> => RelExpr::AddExpr(a),
-    <l: RelExpr> <op: RelOp> <a: AddExpr> => RelExpr::Rel(Box::new(l), op, Box::new(a)),
+    <l: RelExpr> <op: RelOp> <a: AddExpr> => RelExpr::Rel(Rc::new(l), op, Rc::new(a)),
 };
