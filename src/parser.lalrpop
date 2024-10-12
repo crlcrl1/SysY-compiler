@@ -2,7 +2,6 @@ use crate::front::ast::*;
 use crate::front::parser_context::ParserContext;
 use crate::front::ident_table::Identifier;
 use crate::util::logger::show_error_range;
-use lalrpop_util::ParseError;
 use std::str::FromStr;
 use std::process::exit;
 use std::rc::Rc;

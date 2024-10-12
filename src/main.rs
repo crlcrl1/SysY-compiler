@@ -29,8 +29,10 @@ fn main() {
         }
     };
     let program = generate_ir(comp_unit, context.identifier_table);
-    KoopaGenerator::from_path(&params.output)
-        .unwrap()
-        .generate_on(&program)
-        .unwrap();
+    if params.koopa {
+        KoopaGenerator::from_path(&params.output)
+            .unwrap()
+            .generate_on(&program)
+            .unwrap();
+    }
 }

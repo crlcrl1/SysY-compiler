@@ -128,14 +128,4 @@ impl IdentifierTable {
     pub fn exists(&self, name: &str, scoop: i32, id_type: IdentifierType) -> bool {
         self.table.contains_key(&(name.to_string(), scoop, id_type))
     }
-
-    pub fn exists_in_current_scoop(&self, name: &str, scoop: i32) -> Option<IdentifierType> {
-        if self.exists(name, scoop, IdentifierType::Variable) {
-            return Some(IdentifierType::Variable);
-        }
-        if self.exists(name, scoop, IdentifierType::Function) {
-            return Some(IdentifierType::Function);
-        }
-        None
-    }
 }

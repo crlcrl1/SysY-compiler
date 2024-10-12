@@ -33,7 +33,7 @@ fn attach_func_def(program: &mut Program, func_def: &FuncDef, scope: &mut Scoop)
         DataType::Void => Type::get_unit(),
         DataType::Int => Type::get_i32(),
     };
-    let func_params = get_func_param(&func_def.params);
+    let func_params = get_func_param(&func_def.params, scope);
     let func_data =
         FunctionData::with_param_names("@".to_string() + &func_def.name, func_params, ret_type);
     let func = program.new_func(func_data);
@@ -59,15 +59,16 @@ fn attach_func_body(func_data: &mut FunctionData, body: &Block, scope: &mut Scoo
                             .dfg_mut()
                             .new_bb()
                             .basic_block(Some("%entry".to_string()));
-                        let ret_val = expr.eval(scope);
-                        func_data.layout_mut().bbs_mut().extend([entry]);
-                        let ret_val = func_data.dfg_mut().new_value().integer(ret_val);
-                        let ret = func_data.dfg_mut().new_value().ret(Some(ret_val));
-                        func_data
-                            .layout_mut()
-                            .bb_mut(entry)
-                            .insts_mut()
-                            .extend([ret]);
+                        if let Some(ret_val) = expr.eval(scope) {
+                            func_data.layout_mut().bbs_mut().extend([entry]);
+                            let ret_val = func_data.dfg_mut().new_value().integer(ret_val);
+                            let ret = func_data.dfg_mut().new_value().ret(Some(ret_val));
+                            func_data
+                                .layout_mut()
+                                .bb_mut(entry)
+                                .insts_mut()
+                                .extend([ret]);
+                        }
                     }
                 }
                 Stmt::Break => {}
@@ -77,9 +78,12 @@ fn attach_func_body(func_data: &mut FunctionData, body: &Block, scope: &mut Scoo
             BlockItem::Decl(decl) => {}
         }
     }
+    if let Err(msg) = scope.go_out_scoop() {
+        show_error(&msg, 1);
+    }
 }
 
-fn get_func_param(params: &Vec<Rc<FuncFParam>>) -> Vec<(Option<String>, Type)> {
+fn get_func_param(params: &Vec<Rc<FuncFParam>>, scoop: &mut Scoop) -> Vec<(Option<String>, Type)> {
     let mut func_params = vec![];
     for param in params {
         match param.as_ref() {
@@ -87,16 +91,20 @@ fn get_func_param(params: &Vec<Rc<FuncFParam>>) -> Vec<(Option<String>, Type)> {
                 func_params.push((Some("@".to_string() + &normal_param.name), Type::get_i32()));
             }
             FuncFParam::ArrayFParam(array_param) => {
-                let mut param_type = if array_param.shape.len() >= 1 {
-                    Type::get_array(
-                        Type::get_i32(),
-                        eval_const_expr(&array_param.shape[0]) as usize,
-                    )
+                let shape = if array_param.placeholder {
+                    &array_param.shape[..]
                 } else {
-                    Type::get_pointer(Type::get_i32())
+                    &array_param.shape[1..]
                 };
-                for i in array_param.shape.iter().rev() {
-                    let v = eval_const_expr(i);
+                let mut param_type = Type::get_pointer(Type::get_i32());
+                for i in shape.iter().rev() {
+                    let v = i.eval(scoop);
+                    let v = match v {
+                        Some(v) => v,
+                        None => {
+                            show_error("Array size must be a constant", 1);
+                        }
+                    };
                     if v <= 0 {
                         show_error("Array size must be greater than 0", 1);
                     }
@@ -108,9 +116,4 @@ fn get_func_param(params: &Vec<Rc<FuncFParam>>) -> Vec<(Option<String>, Type)> {
     }
 
     func_params
-}
-
-fn eval_const_expr(expr: &ConstExpr) -> i32 {
-    // TODO: Implement this.
-    1
 }
