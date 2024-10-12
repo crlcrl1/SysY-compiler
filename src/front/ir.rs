@@ -7,7 +7,7 @@ use crate::front::ir::eval::Eval;
 use crate::front::ir::scope::Scoop;
 use crate::util::logger::show_error;
 use koopa::ir::builder::{BasicBlockBuilder, LocalInstBuilder, ValueBuilder};
-use koopa::ir::{FunctionData, Program, Type, Value};
+use koopa::ir::{FunctionData, Program, Type};
 use std::rc::Rc;
 
 pub fn generate_ir(comp_unit: CompUnit, identifier_table: IdentifierTable) -> Program {
@@ -42,6 +42,9 @@ fn attach_func_def(program: &mut Program, func_def: &FuncDef, scope: &mut Scoop)
 }
 
 fn attach_func_body(func_data: &mut FunctionData, body: &Block, scope: &mut Scoop) {
+    if let Err(msg) = scope.go_into_scoop(body.id) {
+        show_error(&msg, 1);
+    }
     for block_item in &body.items {
         match block_item {
             BlockItem::Stmt(stmt) => match stmt {

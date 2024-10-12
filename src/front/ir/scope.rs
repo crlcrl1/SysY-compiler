@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 pub type Result = std::result::Result<(), String>;
 
+#[derive(Debug)]
 pub struct Scoop {
     root: Node<i32>,
     table: IdentifierTable,
