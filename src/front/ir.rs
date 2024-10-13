@@ -59,7 +59,7 @@ fn attach_func_body(func_data: &mut FunctionData, body: &Block, scope: &mut Scoo
                             .dfg_mut()
                             .new_bb()
                             .basic_block(Some("%entry".to_string()));
-                        if let Some(ret_val) = expr.eval(scope) {
+                        if let Ok(ret_val) = expr.eval(scope) {
                             func_data.layout_mut().bbs_mut().extend([entry]);
                             let ret_val = func_data.dfg_mut().new_value().integer(ret_val);
                             let ret = func_data.dfg_mut().new_value().ret(Some(ret_val));
@@ -98,13 +98,9 @@ fn get_func_param(params: &Vec<Rc<FuncFParam>>, scoop: &mut Scoop) -> Vec<(Optio
                 };
                 let mut param_type = Type::get_pointer(Type::get_i32());
                 for i in shape.iter().rev() {
-                    let v = i.eval(scoop);
-                    let v = match v {
-                        Some(v) => v,
-                        None => {
-                            show_error("Array size must be a constant", 1);
-                        }
-                    };
+                    let v = i.eval(scoop).unwrap_or_else(|_| {
+                        show_error("Array size must be a constant", 1);
+                    });
                     if v <= 0 {
                         show_error("Array size must be greater than 0", 1);
                     }

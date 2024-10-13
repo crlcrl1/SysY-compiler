@@ -3,79 +3,66 @@ use crate::front::ident_table::Identifier;
 use crate::front::ir::scope::Scoop;
 use crate::util::logger::show_error;
 
+pub enum EvalError {
+    DivisionByZero,
+    Overflow,
+    NotSupportedVariable,
+}
+
+type EvalResult = Result<i32, EvalError>;
+
 pub trait Eval {
-    fn eval(&self, scope: &mut Scoop) -> Option<i32>;
+    fn eval(&self, scope: &mut Scoop) -> EvalResult;
 }
 
 impl Eval for ConstExpr {
-    fn eval(&self, scope: &mut Scoop) -> Option<i32> {
+    fn eval(&self, scope: &mut Scoop) -> EvalResult {
         self.0.eval(scope)
     }
 }
 
 impl Eval for AddExpr {
-    fn eval(&self, scope: &mut Scoop) -> Option<i32> {
+    fn eval(&self, scope: &mut Scoop) -> EvalResult {
         match self {
             AddExpr::MulExpr(mul_expr) => mul_expr.eval(scope),
             AddExpr::Add(left, op, right) => match op {
-                AddOp::Add => match left.eval(scope) {
-                    Some(left) => match right.eval(scope) {
-                        Some(right) => Some(left + right),
-                        None => None,
-                    },
-                    None => None,
-                },
-                AddOp::Sub => match left.eval(scope) {
-                    Some(left) => match right.eval(scope) {
-                        Some(right) => Some(left - right),
-                        None => None,
-                    },
-                    None => None,
-                },
+                AddOp::Add => left
+                    .eval(scope)?
+                    .checked_add(right.eval(scope)?)
+                    .ok_or(EvalError::Overflow),
+                AddOp::Sub => left
+                    .eval(scope)?
+                    .checked_sub(right.eval(scope)?)
+                    .ok_or(EvalError::Overflow),
             },
         }
     }
 }
 
 impl Eval for MulExpr {
-    fn eval(&self, scope: &mut Scoop) -> Option<i32> {
+    fn eval(&self, scope: &mut Scoop) -> EvalResult {
         match self {
             MulExpr::UnaryExpr(unary_expr) => unary_expr.eval(scope),
             MulExpr::Mul(left, op, right) => match op {
-                MulOp::Div => match left.eval(scope) {
-                    Some(left) => match right.eval(scope) {
-                        Some(0) => {
-                            show_error("Division by zero.", 1);
-                        }
-                        Some(right) => Some(left / right),
-                        None => None,
-                    },
-                    None => None,
-                },
-                MulOp::Mod => match left.eval(scope) {
-                    Some(left) => match right.eval(scope) {
-                        Some(0) => {
-                            show_error("Modulo by zero.", 1);
-                        }
-                        Some(right) => Some(left % right),
-                        None => None,
-                    },
-                    None => None,
-                },
-                MulOp::Mul => match left.eval(scope) {
-                    Some(left) => match right.eval(scope) {
-                        Some(right) => Some(left * right),
-                        None => None,
-                    },
-                    None => None,
-                },
+                MulOp::Div => left
+                    .eval(scope)?
+                    .checked_div(right.eval(scope)?)
+                    .ok_or(EvalError::DivisionByZero),
+                MulOp::Mod => left
+                    .eval(scope)?
+                    .checked_rem(right.eval(scope)?)
+                    .ok_or(EvalError::DivisionByZero),
+                MulOp::Mul => left
+                    .eval(scope)?
+                    .checked_mul(right.eval(scope)?)
+                    .ok_or(EvalError::Overflow),
             },
         }
     }
 }
 
 impl Eval for UnaryExpr {
-    fn eval(&self, scope: &mut Scoop) -> Option<i32> {
+    fn eval(&self, scope: &mut Scoop) -> EvalResult {
         match self {
             UnaryExpr::PrimaryExpr(primary_expr) => primary_expr.eval(scope),
             UnaryExpr::FuncCall(_) => {
@@ -91,23 +78,23 @@ impl Eval for UnaryExpr {
 }
 
 impl Eval for PrimaryExpr {
-    fn eval(&self, scope: &mut Scoop) -> Option<i32> {
+    fn eval(&self, scope: &mut Scoop) -> EvalResult {
         match self {
             PrimaryExpr::Expr(expr) => expr.eval(scope),
             PrimaryExpr::LVal(lval) => lval.eval(scope),
-            PrimaryExpr::Number(num) => Some(*num),
+            PrimaryExpr::Number(num) => Ok(*num),
         }
     }
 }
 
 impl Eval for Expr {
-    fn eval(&self, scope: &mut Scoop) -> Option<i32> {
+    fn eval(&self, scope: &mut Scoop) -> EvalResult {
         self.0.eval(scope)
     }
 }
 
 impl Eval for LVal {
-    fn eval(&self, scope: &mut Scoop) -> Option<i32> {
+    fn eval(&self, scope: &mut Scoop) -> EvalResult {
         match self {
             LVal::Var(var) => {
                 if let Some(id) = scope.get_identifier(var) {
@@ -115,15 +102,15 @@ impl Eval for LVal {
                     match id {
                         Identifier::Constant(constant) => match *constant.def {
                             ConstDef::NormalConstDef(ref const_def) => const_def.value.eval(scope),
-                            ConstDef::ArrayConstDef(_) => None,
+                            ConstDef::ArrayConstDef(_) => Err(EvalError::NotSupportedVariable),
                         },
-                        _ => None,
+                        _ => Err(EvalError::NotSupportedVariable),
                     }
                 } else {
-                    None
+                    Err(EvalError::NotSupportedVariable)
                 }
             }
-            LVal::ArrayElem(_) => None,
+            LVal::ArrayElem(_) => Err(EvalError::NotSupportedVariable),
         }
     }
 }
