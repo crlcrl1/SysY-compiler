@@ -6,6 +6,7 @@ use std::fs;
 use util::args::Params;
 use util::logger::{show_error, show_parse_error};
 
+mod back;
 mod front;
 mod util;
 

@@ -71,7 +71,7 @@ pub enum ExprArray {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
-pub struct Expr(pub Rc<AddExpr>);
+pub struct Expr(pub Rc<LOrExpr>);
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct FuncDef {
@@ -258,7 +258,7 @@ pub struct FuncCall {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
-pub struct ConstExpr(pub Rc<AddExpr>);
+pub struct ConstExpr(pub Rc<LOrExpr>);
 
 impl VarDef {
     pub fn get_name(&self) -> &str {

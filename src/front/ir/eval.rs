@@ -9,6 +9,10 @@ pub enum EvalError {
     NotSupportedVariable,
 }
 
+fn to_bool(x: i32) -> bool {
+    x != 0
+}
+
 type EvalResult = Result<i32, EvalError>;
 
 pub trait Eval {
@@ -18,6 +22,54 @@ pub trait Eval {
 impl Eval for ConstExpr {
     fn eval(&self, scope: &mut Scoop) -> EvalResult {
         self.0.eval(scope)
+    }
+}
+
+impl Eval for LOrExpr {
+    fn eval(&self, scope: &mut Scoop) -> EvalResult {
+        match self {
+            LOrExpr::LAndExpr(and) => and.eval(scope),
+            LOrExpr::Or(left, right) => {
+                Ok((left.eval(scope).map(to_bool)? || right.eval(scope).map(to_bool)?) as i32)
+            }
+        }
+    }
+}
+
+impl Eval for LAndExpr {
+    fn eval(&self, scope: &mut Scoop) -> EvalResult {
+        match self {
+            LAndExpr::EqExpr(eq) => eq.eval(scope),
+            LAndExpr::And(left, right) => {
+                Ok((left.eval(scope).map(to_bool)? && right.eval(scope).map(to_bool)?) as i32)
+            }
+        }
+    }
+}
+
+impl Eval for EqExpr {
+    fn eval(&self, scope: &mut Scoop) -> EvalResult {
+        match self {
+            EqExpr::RelExpr(rel) => rel.eval(scope),
+            EqExpr::Eq(left, op, right) => match op {
+                EqOp::Eq => Ok((left.eval(scope)? == right.eval(scope)?) as i32),
+                EqOp::Ne => Ok((left.eval(scope)? != right.eval(scope)?) as i32),
+            },
+        }
+    }
+}
+
+impl Eval for RelExpr {
+    fn eval(&self, scope: &mut Scoop) -> EvalResult {
+        match self {
+            RelExpr::AddExpr(add) => add.eval(scope),
+            RelExpr::Rel(left, op, right) => match op {
+                RelOp::Lt => Ok((left.eval(scope)? < right.eval(scope)?) as i32),
+                RelOp::Gt => Ok((left.eval(scope)? > right.eval(scope)?) as i32),
+                RelOp::Le => Ok((left.eval(scope)? <= right.eval(scope)?) as i32),
+                RelOp::Ge => Ok((left.eval(scope)? >= right.eval(scope)?) as i32),
+            },
+        }
     }
 }
 

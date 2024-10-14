@@ -259,7 +259,7 @@ ConstDef: Rc<ConstDef> = {
 };
 
 ConstExpr: ConstExpr = {
-    <a: AddExpr> => ConstExpr(Rc::new(a)),
+    <a: LOrExpr> => ConstExpr(Rc::new(a)),
 }
 
 ConstArray: ConstArray = {
@@ -291,7 +291,7 @@ VarDef: Rc<VarDef> = {
 };
 
 pub Expr: Expr = {
-    <a: AddExpr> => Expr(Rc::new(a)),
+    <a: LOrExpr> => Expr(Rc::new(a)),
 };
 
 ExprArray: ExprArray = {
