@@ -44,13 +44,20 @@ fn inst_macro_impl(ast: DeriveInput) -> TokenStream {
         })
         .collect::<Vec<_>>();
     let mut format_str = asm_name;
-    fields.iter().for_each(|field| {
-        if field.to_string() == "offset" {
-            format_str.push_str(" ({})");
+    let field_count = fields.len();
+    let mut i = 0;
+    while i < field_count {
+        if fields[i] == "offset" {
+            format_str.push_str(" ({}){},");
+            i += 2;
         } else {
-            format_str.push_str(" {}");
+            format_str.push_str(" {},");
+            i += 1;
         }
-    });
+    }
+    if format_str.ends_with(",") {
+        format_str.pop();
+    }
     let gen = quote! {
         impl Inst for #name {
             fn dump(&self) -> String {
