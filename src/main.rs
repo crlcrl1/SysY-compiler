@@ -36,4 +36,8 @@ fn main() {
             .generate_on(&program)
             .unwrap();
     }
+    if params.riscv {
+        let asm = back::generate_asm(&program);
+        fs::write(&params.output, asm).unwrap();
+    }
 }

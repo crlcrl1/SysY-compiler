@@ -77,11 +77,20 @@ name = "compiler"
 version = "0.1.0"
 dependencies = [
  "colored",
+ "compiler_macro",
  "concat-idents",
  "koopa",
  "lalrpop",
  "lalrpop-util",
  "rctree",
+]
+
+[[package]]
+name = "compiler_macro"
+version = "0.1.0"
+dependencies = [
+ "quote",
+ "syn",
 ]
 
 [[package]]

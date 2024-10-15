@@ -14,6 +14,7 @@ koopa = "0.0.7"
 colored = "2.1.0"
 rctree = "0.6.0"
 concat-idents = "1.1.5"
+compiler_macro = { path = "./compiler_macro" }
 
 [build-dependencies]
 lalrpop = "0.22.0"

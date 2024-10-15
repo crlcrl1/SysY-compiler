@@ -49,25 +49,35 @@ fn test_expr() {
     let result = expr_parser.parse(&mut context, input);
     assert_eq!(
         result,
-        Ok(Expr(Rc::new(AddExpr::Add(
-            Rc::new(AddExpr::MulExpr(MulExpr::UnaryExpr(
-                UnaryExpr::PrimaryExpr(PrimaryExpr::Number(1))
-            ))),
-            AddOp::Add,
-            Rc::new(MulExpr::Mul(
-                Rc::new(MulExpr::UnaryExpr(UnaryExpr::PrimaryExpr(
-                    PrimaryExpr::Number(2)
+        Ok(Expr(Rc::new(LOrExpr::LAndExpr(LAndExpr::EqExpr(
+            EqExpr::RelExpr(RelExpr::AddExpr(AddExpr::Add(
+                Rc::new(AddExpr::MulExpr(MulExpr::UnaryExpr(
+                    UnaryExpr::PrimaryExpr(PrimaryExpr::Number(1))
                 ))),
-                MulOp::Mul,
-                Rc::new(UnaryExpr::Unary(
-                    UnaryOp::Neg,
-                    Rc::new(UnaryExpr::PrimaryExpr(PrimaryExpr::LVal(LVal::Var(
-                        "a".to_string()
-                    ))))
+                AddOp::Add,
+                Rc::new(MulExpr::Mul(
+                    Rc::new(MulExpr::UnaryExpr(UnaryExpr::PrimaryExpr(
+                        PrimaryExpr::Number(2)
+                    ))),
+                    MulOp::Mul,
+                    Rc::new(UnaryExpr::Unary(
+                        UnaryOp::Neg,
+                        Rc::new(UnaryExpr::PrimaryExpr(PrimaryExpr::LVal(LVal::Var(
+                            "a".to_string()
+                        ))))
+                    ))
                 ))
-            ))
-        ))))
+            )))
+        )))))
     );
+}
+
+fn build_number(n: i32) -> LOrExpr {
+    LOrExpr::LAndExpr(LAndExpr::EqExpr(EqExpr::RelExpr(RelExpr::AddExpr(
+        AddExpr::MulExpr(MulExpr::UnaryExpr(UnaryExpr::PrimaryExpr(
+            PrimaryExpr::Number(n),
+        ))),
+    ))))
 }
 
 #[test]
@@ -102,9 +112,7 @@ fn test_comp_unit() {
         GlobalItem::Decl(Decl::VarDecl(vec![Rc::new(VarDef::NormalVarDef(
             NormalVarDef {
                 name: "a".to_string(),
-                value: Some(Expr(Rc::new(AddExpr::MulExpr(MulExpr::UnaryExpr(
-                    UnaryExpr::PrimaryExpr(PrimaryExpr::Number(10))
-                )))))
+                value: Some(Expr(Rc::new(build_number(10)))),
             }
         ))]))
     );
@@ -114,18 +122,12 @@ fn test_comp_unit() {
             ArrayConstDef {
                 name: "b".to_string(),
                 shape: vec![
-                    ConstExpr(Rc::new(AddExpr::MulExpr(MulExpr::UnaryExpr(
-                        UnaryExpr::PrimaryExpr(PrimaryExpr::Number(10))
-                    )))),
-                    ConstExpr(Rc::new(AddExpr::MulExpr(MulExpr::UnaryExpr(
-                        UnaryExpr::PrimaryExpr(PrimaryExpr::Number(15))
-                    ))))
+                    ConstExpr(Rc::new(build_number(10))),
+                    ConstExpr(Rc::new(build_number(15)))
                 ],
-                values: ConstArray::Array(vec![ConstArray::Val(ConstExpr(Rc::new(
-                    AddExpr::MulExpr(MulExpr::UnaryExpr(UnaryExpr::PrimaryExpr(
-                        PrimaryExpr::Number(1)
-                    )))
-                )))]),
+                values: ConstArray::Array(vec![ConstArray::Val(ConstExpr(Rc::new(build_number(
+                    1
+                ))))]),
             }
         ))]))
     );

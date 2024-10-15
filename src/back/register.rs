@@ -1,3 +1,6 @@
+use std::fmt::Display;
+
+#[derive(Debug, Clone, Copy)]
 pub struct Register {
     name: &'static str,
 }
@@ -5,6 +8,12 @@ pub struct Register {
 impl Register {
     pub fn name(&self) -> &'static str {
         self.name
+    }
+}
+
+impl Display for Register {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name.to_string())
     }
 }
 
@@ -17,7 +26,7 @@ macro_rules! reg {
 }
 
 macro_rules! regs {
-    ($($name:ident, $display_name:ident);*) => {
+    ($($name:ident, $display_name:ident);* $(;)?) => {
         $(reg!($name, $display_name);)*
     };
 }
@@ -55,5 +64,5 @@ regs!(
     T3, t3;
     T4, t4;
     T5, t5;
-    T6, t6
+    T6, t6;
 );
