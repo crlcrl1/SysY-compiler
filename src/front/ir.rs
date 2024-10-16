@@ -82,7 +82,7 @@ impl GenerateIR<Value> for VarDef {
             VarDef::NormalVarDef(normal_var_def) => {
                 if let Ok(func) = ctx.get_func() {
                     let scope_id = ctx.scope.current_scoop_id();
-                    let var_name = format!("@{}_{}", scope_id, normal_var_def.name);
+                    let var_name = format!("@_{}_{}", scope_id, normal_var_def.name);
                     let bb = ctx.get_bb()?;
                     let func_data = ctx.program.func_mut(func);
                     // allocate variable
