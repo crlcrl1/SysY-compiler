@@ -87,7 +87,7 @@ impl Scope {
         Ok(())
     }
 
-    pub fn current_scoop_id(&self) -> i32 {
+    pub fn current_scope_id(&self) -> i32 {
         *self.current_scoop.borrow()
     }
 
