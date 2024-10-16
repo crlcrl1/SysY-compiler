@@ -95,6 +95,10 @@ impl Scope {
         self.identifiers.get(name)
     }
 
+    pub fn get_identifier_mut(&mut self, name: &str) -> Option<&mut Identifier> {
+        self.identifiers.get_mut(name)
+    }
+
     fn attach_children(scoop_node: &Node<i32>, block: &Block) {
         for item in &block.items {
             match item {

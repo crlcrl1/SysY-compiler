@@ -48,6 +48,7 @@ pub enum ParseError {
     FunctionNotFound,
     BasicBlockNotFound,
     UnknownIdentifier,
+    ConstExprError,
 }
 
 pub trait GenerateIR<T> {
@@ -82,15 +83,27 @@ impl GenerateIR<Value> for VarDef {
                 if let Ok(func) = ctx.get_func() {
                     let scope_id = ctx.scope.current_scoop_id();
                     let var_name = format!("@#{}#{}", scope_id, normal_var_def.name);
-                    let val = if let Some(init) = &normal_var_def.value {
-                        init.generate_ir(ctx)?
-                    } else {
-                        let func_data = ctx.program.func_mut(func);
-                        new_value!(func_data).integer(0)
-                    };
+                    let bb = ctx.get_bb()?;
                     let func_data = ctx.program.func_mut(func);
-                    func_data.dfg_mut().set_value_name(val, Some(var_name));
-                    Ok(val)
+                    // allocate variable
+                    let var_alloc = new_value!(func_data).alloc(Type::get_i32());
+                    ctx.scope
+                        .get_identifier_mut(&normal_var_def.name)
+                        .unwrap()
+                        .set_koopa_def(var_alloc);
+                    func_data
+                        .dfg_mut()
+                        .set_value_name(var_alloc, Some(var_name));
+                    add_inst!(func_data, bb, var_alloc);
+
+                    if let Some(init) = &normal_var_def.value {
+                        // store initial value
+                        let init = init.generate_ir(ctx)?;
+                        let func_data = ctx.program.func_mut(func);
+                        let store = new_value!(func_data).store(init, var_alloc);
+                        add_inst!(func_data, bb, store);
+                    }
+                    Ok(var_alloc)
                 } else {
                     unimplemented!()
                 }
@@ -108,14 +121,19 @@ impl GenerateIR<Value> for ConstDef {
             ConstDef::NormalConstDef(normal) => {
                 if let Ok(func) = ctx.get_func() {
                     let scope_id = ctx.scope.current_scoop_id();
-                    let const_name = format!("@#{}#{}", scope_id, normal.name);
+                    let const_name = format!("@#{}#{}", scope_id, normal.name); // TODO: Add scope id
                     let val = normal
                         .value
                         .eval(&mut ctx.scope)
-                        .map_err(|_| ParseError::InvalidExpr)?;
+                        .map_err(|_| ParseError::ConstExprError)?;
                     let func_data = ctx.program.func_mut(func);
                     let val = new_value!(func_data).integer(val);
                     func_data.dfg_mut().set_value_name(val, Some(const_name));
+                    let ident = ctx
+                        .scope
+                        .get_identifier_mut(&normal.name)
+                        .ok_or(ParseError::UnknownIdentifier)?;
+                    ident.set_koopa_def(val);
                     Ok(val)
                 } else {
                     // TODO: Implement global constant
@@ -131,26 +149,24 @@ impl GenerateIR<Value> for LVal {
     fn generate_ir(&self, ctx: &mut Context) -> Result<Value, ParseError> {
         match self {
             LVal::Var(var) => {
-                let var_name = "@".to_string() + var;
                 let ident = ctx
                     .scope
                     .get_identifier(var)
                     .ok_or(ParseError::UnknownIdentifier)?
                     .clone();
                 let val = match ident {
-                    Identifier::Variable(var) => var.def.generate_ir(ctx)?,
-                    Identifier::Constant(constant) => constant.def.generate_ir(ctx)?,
-                    Identifier::FunctionParam(_) => {
+                    Identifier::Variable(ref var) => {
                         let func = ctx.get_func()?;
-                        let func_data = ctx.program.func(func);
-                        *func_data
-                            .params()
-                            .iter()
-                            .find(|p| {
-                                let name = func_data.dfg().value(**p).name();
-                                *name == Some(var_name.clone())
-                            })
-                            .ok_or(ParseError::UnknownIdentifier)?
+                        let bb = ctx.get_bb()?;
+                        let func_data = ctx.program.func_mut(func);
+                        let var_def = var.koopa_def.ok_or(ParseError::UnknownIdentifier)?;
+                        let load = new_value!(func_data).load(var_def);
+                        add_inst!(func_data, bb, load);
+                        load
+                    }
+                    Identifier::Constant(ref constant) => constant.def.generate_ir(ctx)?,
+                    Identifier::FunctionParam(ref param) => {
+                        param.koopa_def.ok_or(ParseError::UnknownIdentifier)?
                     }
                     Identifier::Function(_) => return Err(ParseError::InvalidExpr),
                 };
@@ -319,74 +335,128 @@ impl GenerateIR<Value> for LOrExpr {
     }
 }
 
-impl GenerateIR<()> for CompUnit {
+impl GenerateIR<()> for FuncDef {
     fn generate_ir(&self, ctx: &mut Context) -> Result<(), ParseError> {
-        for item in &self.items {
-            match item {
-                GlobalItem::Decl(decl) => {
-                    attach_decl(&mut ctx.program, &decl, &mut ctx.scope);
-                }
-                GlobalItem::FuncDef(func_def) => {
-                    attach_func_def(&mut ctx.program, &func_def, &mut ctx.scope);
-                }
-            }
+        let ret_type = self.ret_type.into();
+        let func_params = get_func_param(&self.params, &mut ctx.scope);
+        let func_data =
+            FunctionData::with_param_names("@".to_string() + &self.name, func_params, ret_type);
+        let func = ctx.program.new_func(func_data);
+        let func_data = ctx.program.func_mut(func);
+        if let Err(msg) = ctx.scope.go_into_scoop(self.body.id) {
+            show_error(&msg, 2);
+        }
+        ctx.func = Some(func);
+        for param in func_data.params() {
+            let param_data = func_data.dfg().value(*param);
+            let param_name = &param_data
+                .name()
+                .clone()
+                .unwrap()
+                .chars()
+                .skip(1)
+                .collect::<String>();
+            ctx.scope
+                .get_identifier_mut(param_name)
+                .unwrap()
+                .set_koopa_def(*param);
+        }
+        self.body.generate_ir(ctx)?;
+        if let Err(msg) = ctx.scope.go_out_scoop() {
+            show_error(&msg, 2);
         }
         Ok(())
     }
 }
 
-fn attach_decl(program: &mut Program, decl: &Decl, scope: &mut Scope) {}
+impl GenerateIR<()> for Block {
+    fn generate_ir(&self, ctx: &mut Context) -> Result<(), ParseError> {
+        let func = ctx.get_func()?;
+        let func_data = ctx.program.func_mut(func);
+        let entry = new_bb!(func_data).basic_block(Some("%entry".to_string()));
+        add_bb!(func_data, entry);
+        ctx.current_bb = Some(entry);
+        for block_item in &self.items {
+            match block_item {
+                BlockItem::Stmt(stmt) => match stmt {
+                    Stmt::Assign(assign) => assign.generate_ir(ctx)?,
+                    Stmt::Expr(expr) => expr.generate_ir(ctx).map(|_| ())?,
+                    Stmt::Block(block) => block.generate_ir(ctx)?,
+                    Stmt::If(_) => {}
+                    Stmt::While(_) => {}
+                    Stmt::Return(ret) => {
+                        let func = ctx.get_func()?;
+                        let func_data = ctx.program.func_mut(func);
+                        if let Some(expr) = ret {
+                            if let Ok(ret_val) = expr.eval(&mut ctx.scope) {
+                                let ret_val = new_value!(func_data).integer(ret_val);
+                                let ret = new_value!(func_data).ret(Some(ret_val));
+                                add_inst!(func_data, entry, ret);
+                            } else {
+                                let val = expr.generate_ir(ctx)?;
+                                let func = ctx.get_func()?;
+                                let func_data = ctx.program.func_mut(func);
+                                let ret = new_value!(func_data).ret(Some(val));
+                                add_inst!(func_data, entry, ret);
+                            }
+                        } else {
+                            let ret = func_data.dfg_mut().new_value().ret(None);
+                            add_inst!(func_data, entry, ret);
+                        }
+                    }
+                    Stmt::Break => {}
+                    Stmt::Continue => {}
+                    Stmt::Empty => {}
+                },
+                BlockItem::Decl(decl) => match decl {
+                    Decl::ConstDecl(_) => {}
+                    Decl::VarDecl(decl) => {
+                        for var_def in decl {
+                            var_def.generate_ir(ctx)?;
+                        }
+                    }
+                },
+            }
+        }
 
-fn attach_func_def(program: &mut Program, func_def: &FuncDef, scope: &mut Scope) {
-    let ret_type = match func_def.ret_type {
-        DataType::Void => Type::get_unit(),
-        DataType::Int => Type::get_i32(),
-    };
-    let func_params = get_func_param(&func_def.params, scope);
-    let func_data =
-        FunctionData::with_param_names("@".to_string() + &func_def.name, func_params, ret_type);
-    let func = program.new_func(func_data);
-    let func_data = program.func_mut(func);
-    attach_func_body(func_data, &func_def.body, scope);
+        Ok(())
+    }
 }
 
-fn attach_func_body(func_data: &mut FunctionData, body: &Block, scope: &mut Scope) {
-    if let Err(msg) = scope.go_into_scoop(body.id) {
-        show_error(&msg, 2);
-    }
-    for block_item in &body.items {
-        match block_item {
-            BlockItem::Stmt(stmt) => match stmt {
-                Stmt::Assign(_) => {}
-                Stmt::Expr(_) => {}
-                Stmt::Block(_) => {}
-                Stmt::If(_) => {}
-                Stmt::While(_) => {}
-                Stmt::Return(ret) => {
-                    let entry = new_bb!(func_data).basic_block(Some("%entry".to_string()));
-                    add_bb!(func_data, entry);
-                    if let Some(expr) = ret {
-                        if let Ok(ret_val) = expr.eval(scope) {
-                            let ret_val = new_value!(func_data).integer(ret_val);
-                            let ret = new_value!(func_data).ret(Some(ret_val));
-                            add_inst!(func_data, entry, ret);
-                        } else {
-                            todo!()
-                        }
-                    } else {
-                        let ret = func_data.dfg_mut().new_value().ret(None);
-                        add_inst!(func_data, entry, ret);
-                    }
-                }
-                Stmt::Break => {}
-                Stmt::Continue => {}
-                Stmt::Empty => {}
-            },
-            BlockItem::Decl(_) => {}
+impl GenerateIR<()> for Assign {
+    fn generate_ir(&self, ctx: &mut Context) -> Result<(), ParseError> {
+        match self.target {
+            LVal::Var(ref var) => {
+                let val = self.value.generate_ir(ctx)?;
+                let var_decl = ctx
+                    .scope
+                    .get_identifier(var)
+                    .map(|x| x.koopa_def())
+                    .ok_or(ParseError::UnknownIdentifier)?
+                    .ok_or(ParseError::UnknownIdentifier)?;
+                let store = new_value!(ctx.program.func_mut(ctx.get_func()?)).store(val, var_decl);
+                let bb = ctx.get_bb()?;
+                add_inst!(ctx.program.func_mut(ctx.get_func()?), bb, store);
+                Ok(())
+            }
+            LVal::ArrayElem(_) => {
+                unimplemented!()
+            }
         }
     }
-    if let Err(msg) = scope.go_out_scoop() {
-        show_error(&msg, 2);
+}
+
+impl GenerateIR<()> for CompUnit {
+    fn generate_ir(&self, ctx: &mut Context) -> Result<(), ParseError> {
+        for item in &self.items {
+            match item {
+                GlobalItem::Decl(_) => {}
+                GlobalItem::FuncDef(func_def) => {
+                    func_def.generate_ir(ctx)?;
+                }
+            }
+        }
+        Ok(())
     }
 }
 

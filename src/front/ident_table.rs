@@ -1,9 +1,12 @@
 use crate::front::ast::{ConstDef, FuncDef, FuncFParam, VarDef};
+use crate::util::logger::show_error;
+use koopa::ir::Value;
 use std::collections::HashMap;
 use std::rc::Rc;
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct Variable {
+    pub koopa_def: Option<Value>,
     pub def: Rc<VarDef>,
     pub scope: i32,
     pub location: (usize, usize),
@@ -18,6 +21,7 @@ pub struct Constant {
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct FunctionParam {
+    pub koopa_def: Option<Value>,
     pub def: Rc<FuncFParam>,
     pub scope: i32,
     pub location: (usize, usize),
@@ -44,6 +48,7 @@ impl Identifier {
             def,
             scope,
             location,
+            koopa_def: None,
         })
     }
 
@@ -64,7 +69,24 @@ impl Identifier {
             def,
             scope,
             location,
+            koopa_def: None,
         })
+    }
+
+    pub fn koopa_def(&self) -> Option<Value> {
+        match self {
+            Identifier::Variable(var) => var.koopa_def,
+            Identifier::FunctionParam(param) => param.koopa_def,
+            _ => None,
+        }
+    }
+
+    pub fn set_koopa_def(&mut self, koopa_def: Value) {
+        match self {
+            Identifier::Variable(var) => var.koopa_def = Some(koopa_def),
+            Identifier::FunctionParam(param) => param.koopa_def = Some(koopa_def),
+            _ => show_error("set_koopa_def called on non-variable", 2),
+        }
     }
 }
 

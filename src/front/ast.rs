@@ -1,4 +1,4 @@
-use koopa::ir::BinaryOp;
+use koopa::ir::{BinaryOp, Type};
 use std::rc::Rc;
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
@@ -102,7 +102,7 @@ pub struct ArrayFParam {
     pub shape: Vec<ConstExpr>,
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum DataType {
     Void,
     Int,
@@ -329,6 +329,15 @@ impl Into<BinaryOp> for MulOp {
             MulOp::Mul => BinaryOp::Mul,
             MulOp::Div => BinaryOp::Div,
             MulOp::Mod => BinaryOp::Mod,
+        }
+    }
+}
+
+impl Into<Type> for DataType {
+    fn into(self) -> Type {
+        match self {
+            DataType::Void => Type::get_unit(),
+            DataType::Int => Type::get_i32(),
         }
     }
 }
