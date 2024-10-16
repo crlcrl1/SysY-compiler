@@ -82,7 +82,7 @@ impl GenerateIR<Value> for VarDef {
             VarDef::NormalVarDef(normal_var_def) => {
                 if let Ok(func) = ctx.get_func() {
                     let scope_id = ctx.scope.current_scoop_id();
-                    let var_name = format!("@#{}#{}", scope_id, normal_var_def.name);
+                    let var_name = format!("@{}_{}", scope_id, normal_var_def.name);
                     let bb = ctx.get_bb()?;
                     let func_data = ctx.program.func_mut(func);
                     // allocate variable
@@ -120,20 +120,12 @@ impl GenerateIR<Value> for ConstDef {
         match self {
             ConstDef::NormalConstDef(normal) => {
                 if let Ok(func) = ctx.get_func() {
-                    let scope_id = ctx.scope.current_scoop_id();
-                    let const_name = format!("@#{}#{}", scope_id, normal.name); // TODO: Add scope id
                     let val = normal
                         .value
                         .eval(&mut ctx.scope)
                         .map_err(|_| ParseError::ConstExprError)?;
                     let func_data = ctx.program.func_mut(func);
                     let val = new_value!(func_data).integer(val);
-                    func_data.dfg_mut().set_value_name(val, Some(const_name));
-                    let ident = ctx
-                        .scope
-                        .get_identifier_mut(&normal.name)
-                        .ok_or(ParseError::UnknownIdentifier)?;
-                    ident.set_koopa_def(val);
                     Ok(val)
                 } else {
                     // TODO: Implement global constant
