@@ -378,7 +378,6 @@ impl GenerateIR<()> for Block {
         let func_data = ctx.program.func_mut(func);
         add_bb!(func_data, entry);
         ctx.current_bb = Some(entry);
-        let mut returned = false;
         for block_item in &self.items {
             match block_item {
                 BlockItem::Stmt(stmt) => match stmt {
@@ -388,10 +387,6 @@ impl GenerateIR<()> for Block {
                     Stmt::If(_) => {}
                     Stmt::While(_) => {}
                     Stmt::Return(ret) => {
-                        if returned {
-                            // Optimize: Remove unreachable code
-                            return Ok(());
-                        }
                         let func = ctx.get_func()?;
                         let func_data = ctx.program.func_mut(func);
                         if let Some(expr) = ret {
@@ -410,7 +405,8 @@ impl GenerateIR<()> for Block {
                             let ret = func_data.dfg_mut().new_value().ret(None);
                             add_inst!(func_data, entry, ret);
                         }
-                        returned = true;
+                        // Once return is called, we don't need to generate any more IR
+                        return Ok(());
                     }
                     Stmt::Break => {}
                     Stmt::Continue => {}
