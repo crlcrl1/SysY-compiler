@@ -17,6 +17,7 @@ pub struct Context {
     func: Option<Function>,
     scope: Scope,
     current_bb: Option<BasicBlock>,
+    max_basic_block_id: usize,
 }
 
 impl Context {
@@ -26,7 +27,16 @@ impl Context {
             func: None,
             scope,
             current_bb: None,
+            max_basic_block_id: 0,
         }
+    }
+
+    pub fn new_bb(&mut self) -> Result<BasicBlock, ParseError> {
+        self.max_basic_block_id += 1;
+        self.func.ok_or(ParseError::FunctionNotFound).map(|func| {
+            let func_data = self.program.func_mut(func);
+            new_bb!(func_data).basic_block(Some(format!("%bb{}", self.max_basic_block_id)))
+        })
     }
 
     pub fn get_func(&self) -> Result<Function, ParseError> {
@@ -363,11 +373,12 @@ impl GenerateIR<()> for FuncDef {
 
 impl GenerateIR<()> for Block {
     fn generate_ir(&self, ctx: &mut Context) -> Result<(), ParseError> {
+        let entry = ctx.new_bb()?;
         let func = ctx.get_func()?;
         let func_data = ctx.program.func_mut(func);
-        let entry = new_bb!(func_data).basic_block(Some("%entry".to_string()));
         add_bb!(func_data, entry);
         ctx.current_bb = Some(entry);
+        let mut returned = false;
         for block_item in &self.items {
             match block_item {
                 BlockItem::Stmt(stmt) => match stmt {
@@ -377,6 +388,10 @@ impl GenerateIR<()> for Block {
                     Stmt::If(_) => {}
                     Stmt::While(_) => {}
                     Stmt::Return(ret) => {
+                        if returned {
+                            // Optimize: Remove unreachable code
+                            return Ok(());
+                        }
                         let func = ctx.get_func()?;
                         let func_data = ctx.program.func_mut(func);
                         if let Some(expr) = ret {
@@ -395,6 +410,7 @@ impl GenerateIR<()> for Block {
                             let ret = func_data.dfg_mut().new_value().ret(None);
                             add_inst!(func_data, entry, ret);
                         }
+                        returned = true;
                     }
                     Stmt::Break => {}
                     Stmt::Continue => {}
