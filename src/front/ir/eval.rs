@@ -1,6 +1,6 @@
 use crate::front::ast::*;
 use crate::front::ident_table::Identifier;
-use crate::front::ir::scope::Scoop;
+use crate::front::ir::scope::Scope;
 use crate::util::logger::show_error;
 
 pub enum EvalError {
@@ -16,17 +16,17 @@ fn to_bool(x: i32) -> bool {
 type EvalResult = Result<i32, EvalError>;
 
 pub trait Eval {
-    fn eval(&self, scope: &mut Scoop) -> EvalResult;
+    fn eval(&self, scope: &mut Scope) -> EvalResult;
 }
 
 impl Eval for ConstExpr {
-    fn eval(&self, scope: &mut Scoop) -> EvalResult {
+    fn eval(&self, scope: &mut Scope) -> EvalResult {
         self.0.eval(scope)
     }
 }
 
 impl Eval for LOrExpr {
-    fn eval(&self, scope: &mut Scoop) -> EvalResult {
+    fn eval(&self, scope: &mut Scope) -> EvalResult {
         match self {
             LOrExpr::LAndExpr(and) => and.eval(scope),
             LOrExpr::Or(left, right) => {
@@ -37,7 +37,7 @@ impl Eval for LOrExpr {
 }
 
 impl Eval for LAndExpr {
-    fn eval(&self, scope: &mut Scoop) -> EvalResult {
+    fn eval(&self, scope: &mut Scope) -> EvalResult {
         match self {
             LAndExpr::EqExpr(eq) => eq.eval(scope),
             LAndExpr::And(left, right) => {
@@ -48,7 +48,7 @@ impl Eval for LAndExpr {
 }
 
 impl Eval for EqExpr {
-    fn eval(&self, scope: &mut Scoop) -> EvalResult {
+    fn eval(&self, scope: &mut Scope) -> EvalResult {
         match self {
             EqExpr::RelExpr(rel) => rel.eval(scope),
             EqExpr::Eq(left, op, right) => match op {
@@ -60,7 +60,7 @@ impl Eval for EqExpr {
 }
 
 impl Eval for RelExpr {
-    fn eval(&self, scope: &mut Scoop) -> EvalResult {
+    fn eval(&self, scope: &mut Scope) -> EvalResult {
         match self {
             RelExpr::AddExpr(add) => add.eval(scope),
             RelExpr::Rel(left, op, right) => match op {
@@ -74,7 +74,7 @@ impl Eval for RelExpr {
 }
 
 impl Eval for AddExpr {
-    fn eval(&self, scope: &mut Scoop) -> EvalResult {
+    fn eval(&self, scope: &mut Scope) -> EvalResult {
         match self {
             AddExpr::MulExpr(mul_expr) => mul_expr.eval(scope),
             AddExpr::Add(left, op, right) => match op {
@@ -92,7 +92,7 @@ impl Eval for AddExpr {
 }
 
 impl Eval for MulExpr {
-    fn eval(&self, scope: &mut Scoop) -> EvalResult {
+    fn eval(&self, scope: &mut Scope) -> EvalResult {
         match self {
             MulExpr::UnaryExpr(unary_expr) => unary_expr.eval(scope),
             MulExpr::Mul(left, op, right) => match op {
@@ -114,11 +114,11 @@ impl Eval for MulExpr {
 }
 
 impl Eval for UnaryExpr {
-    fn eval(&self, scope: &mut Scoop) -> EvalResult {
+    fn eval(&self, scope: &mut Scope) -> EvalResult {
         match self {
             UnaryExpr::PrimaryExpr(primary_expr) => primary_expr.eval(scope),
             UnaryExpr::FuncCall(_) => {
-                show_error("Function call in constant expression is not supported.", 1);
+                show_error("Function call in constant expression is not supported.", 2);
             }
             UnaryExpr::Unary(op, unary_expr) => match op {
                 UnaryOp::Neg => unary_expr.eval(scope).map(|x| -x),
@@ -130,7 +130,7 @@ impl Eval for UnaryExpr {
 }
 
 impl Eval for PrimaryExpr {
-    fn eval(&self, scope: &mut Scoop) -> EvalResult {
+    fn eval(&self, scope: &mut Scope) -> EvalResult {
         match self {
             PrimaryExpr::Expr(expr) => expr.eval(scope),
             PrimaryExpr::LVal(lval) => lval.eval(scope),
@@ -140,13 +140,13 @@ impl Eval for PrimaryExpr {
 }
 
 impl Eval for Expr {
-    fn eval(&self, scope: &mut Scoop) -> EvalResult {
+    fn eval(&self, scope: &mut Scope) -> EvalResult {
         self.0.eval(scope)
     }
 }
 
 impl Eval for LVal {
-    fn eval(&self, scope: &mut Scoop) -> EvalResult {
+    fn eval(&self, scope: &mut Scope) -> EvalResult {
         match self {
             LVal::Var(var) => {
                 if let Some(id) = scope.get_identifier(var) {

@@ -6,15 +6,15 @@ use std::collections::HashMap;
 pub type Result = std::result::Result<(), String>;
 
 #[derive(Debug)]
-pub struct Scoop {
+pub struct Scope {
     root: Node<i32>,
     table: IdentifierTable,
     identifiers: HashMap<String, Identifier>,
     current_scoop: Node<i32>,
 }
 
-impl Scoop {
-    pub fn new(identifier_table: IdentifierTable, comp_unit: &CompUnit) -> Scoop {
+impl Scope {
+    pub fn new(identifier_table: IdentifierTable, comp_unit: &CompUnit) -> Scope {
         let root = Node::new(0);
 
         for item in &comp_unit.items {
@@ -29,7 +29,7 @@ impl Scoop {
             }
         }
 
-        let mut scope = Scoop {
+        let mut scope = Scope {
             root: root.clone(),
             table: identifier_table,
             identifiers: HashMap::new(),
@@ -87,7 +87,7 @@ impl Scoop {
         Ok(())
     }
 
-    fn current_scoop_id(&self) -> i32 {
+    pub fn current_scoop_id(&self) -> i32 {
         *self.current_scoop.borrow()
     }
 

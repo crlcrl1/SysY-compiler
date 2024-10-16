@@ -1,3 +1,4 @@
+use koopa::ir::BinaryOp;
 use std::rc::Rc;
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
@@ -175,7 +176,7 @@ pub enum LAndExpr {
     And(Rc<LAndExpr>, Rc<EqExpr>),
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum EqOp {
     Eq,
     Ne,
@@ -187,7 +188,7 @@ pub enum EqExpr {
     Eq(Rc<EqExpr>, EqOp, Rc<RelExpr>),
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum RelOp {
     Lt,
     Gt,
@@ -201,7 +202,7 @@ pub enum RelExpr {
     Rel(Rc<RelExpr>, RelOp, Rc<AddExpr>),
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum AddOp {
     Add,
     Sub,
@@ -213,7 +214,7 @@ pub enum AddExpr {
     Add(Rc<AddExpr>, AddOp, Rc<MulExpr>),
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum MulOp {
     Mul,
     Div,
@@ -289,6 +290,45 @@ impl FuncFParam {
         match self {
             FuncFParam::NormalFParam(normal_f_param) => &normal_f_param.name,
             FuncFParam::ArrayFParam(array_f_param) => &array_f_param.name,
+        }
+    }
+}
+
+impl Into<BinaryOp> for RelOp {
+    fn into(self) -> BinaryOp {
+        match self {
+            RelOp::Lt => BinaryOp::Lt,
+            RelOp::Gt => BinaryOp::Gt,
+            RelOp::Le => BinaryOp::Le,
+            RelOp::Ge => BinaryOp::Ge,
+        }
+    }
+}
+
+impl Into<BinaryOp> for EqOp {
+    fn into(self) -> BinaryOp {
+        match self {
+            EqOp::Eq => BinaryOp::Eq,
+            EqOp::Ne => BinaryOp::NotEq,
+        }
+    }
+}
+
+impl Into<BinaryOp> for AddOp {
+    fn into(self) -> BinaryOp {
+        match self {
+            AddOp::Add => BinaryOp::Add,
+            AddOp::Sub => BinaryOp::Sub,
+        }
+    }
+}
+
+impl Into<BinaryOp> for MulOp {
+    fn into(self) -> BinaryOp {
+        match self {
+            MulOp::Mul => BinaryOp::Mul,
+            MulOp::Div => BinaryOp::Div,
+            MulOp::Mod => BinaryOp::Mod,
         }
     }
 }
