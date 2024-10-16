@@ -20,15 +20,6 @@ impl Params {
         args.next();
         while let Some(arg) = args.next() {
             match arg.as_str() {
-                "--help" | "-h" => {
-                    println!("Usage: compiler [options] <input file>");
-                    println!("Options:");
-                    println!("  -o <output file>  Output file");
-                    println!("  -koopa            Output Koopa IR");
-                    println!("  -riscv            Output RISC-V assembly");
-                    println!("  -perf");
-                    exit(0);
-                }
                 "-o" => {
                     if let Some(output_path) = args.next() {
                         output = output_path;

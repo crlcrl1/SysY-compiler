@@ -9,12 +9,9 @@ fn test_number() {
     let context = ParserContext::new("", "");
 
     assert_eq!(number_parser.parse(&mut context.clone(), "123"), Ok(123));
-    assert_eq!(number_parser.parse(&mut context.clone(), "-123"), Ok(-123));
     assert_eq!(number_parser.parse(&mut context.clone(), "0"), Ok(0));
     assert_eq!(number_parser.parse(&mut context.clone(), "010"), Ok(8));
-    assert_eq!(number_parser.parse(&mut context.clone(), "-010"), Ok(-8));
     assert_eq!(number_parser.parse(&mut context.clone(), "0x10"), Ok(16));
-    assert_eq!(number_parser.parse(&mut context.clone(), "-0x10"), Ok(-16));
 
     assert!(number_parser.parse(&mut context.clone(), "123a").is_err());
 }

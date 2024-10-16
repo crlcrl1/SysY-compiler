@@ -16,14 +16,14 @@ match {
 }
 
 pub Number: i32 = {
-    <l: @L> <s: r"-?[1-9][0-9]*"> <r: @R> => match i32::from_str(s) {
+    <l: @L> <s: r"[1-9][0-9]*"> <r: @R> => match i32::from_str(s) {
         Ok(v) => v,
         Err(_) => {
             show_error_range(context.input, l, r, "Number is out of range", context.file_path);
             exit(1)
         },
     },
-    <l: @L> <s: r"-?0[0-7]*"> <r: @R> => match i32::from_str_radix(s, 8) {
+    <l: @L> <s: r"0[0-7]*"> <r: @R> => match i32::from_str_radix(s, 8) {
         Ok(v) => v,
         Err(_) => {
             show_error_range(context.input, l, r, "Number is out of range", context.file_path);
@@ -36,14 +36,7 @@ pub Number: i32 = {
             show_error_range(context.input, l, r, "Number is out of range", context.file_path);
             exit(1)
         },
-    },
-    <l: @L> <s: r"-0[xX][0-9a-fA-F]+"> <r: @R> => match i32::from_str_radix(&s[3..], 16) {
-        Ok(v) => -v,
-        Err(_) => {
-            show_error_range(context.input, l, r, "Number is out of range", context.file_path);
-            exit(1)
-        },
-    },
+    }
 };
 
 UnaryOp: UnaryOp = {
