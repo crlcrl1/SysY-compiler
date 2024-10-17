@@ -61,11 +61,14 @@ pub enum ParseError {
     ConstExprError,
 }
 
-pub trait GenerateIR<T> {
-    fn generate_ir(&self, ctx: &mut Context) -> Result<T, ParseError>;
+pub trait GenerateIR {
+    type Output;
+    fn generate_ir(&self, ctx: &mut Context) -> Result<Self::Output, ParseError>;
 }
 
-impl GenerateIR<Value> for ConstExpr {
+impl GenerateIR for ConstExpr {
+    type Output = Value;
+
     fn generate_ir(&self, ctx: &mut Context) -> Result<Value, ParseError> {
         let val = self
             .0
@@ -80,13 +83,17 @@ impl GenerateIR<Value> for ConstExpr {
     }
 }
 
-impl GenerateIR<Value> for Expr {
+impl GenerateIR for Expr {
+    type Output = Value;
+
     fn generate_ir(&self, ctx: &mut Context) -> Result<Value, ParseError> {
         self.0.generate_ir(ctx)
     }
 }
 
-impl GenerateIR<Value> for VarDef {
+impl GenerateIR for VarDef {
+    type Output = Value;
+
     fn generate_ir(&self, ctx: &mut Context) -> Result<Value, ParseError> {
         match self {
             VarDef::NormalVarDef(normal_var_def) => {
@@ -125,7 +132,9 @@ impl GenerateIR<Value> for VarDef {
     }
 }
 
-impl GenerateIR<Value> for ConstDef {
+impl GenerateIR for ConstDef {
+    type Output = Value;
+
     fn generate_ir(&self, ctx: &mut Context) -> Result<Value, ParseError> {
         match self {
             ConstDef::NormalConstDef(normal) => {
@@ -147,7 +156,9 @@ impl GenerateIR<Value> for ConstDef {
     }
 }
 
-impl GenerateIR<Value> for LVal {
+impl GenerateIR for LVal {
+    type Output = Value;
+
     fn generate_ir(&self, ctx: &mut Context) -> Result<Value, ParseError> {
         match self {
             LVal::Var(var) => {
@@ -182,7 +193,9 @@ impl GenerateIR<Value> for LVal {
     }
 }
 
-impl GenerateIR<Value> for PrimaryExpr {
+impl GenerateIR for PrimaryExpr {
+    type Output = Value;
+
     fn generate_ir(&self, ctx: &mut Context) -> Result<Value, ParseError> {
         match self {
             PrimaryExpr::Expr(expr) => expr.generate_ir(ctx),
@@ -196,7 +209,9 @@ impl GenerateIR<Value> for PrimaryExpr {
     }
 }
 
-impl GenerateIR<Value> for UnaryExpr {
+impl GenerateIR for UnaryExpr {
+    type Output = Value;
+
     fn generate_ir(&self, ctx: &mut Context) -> Result<Value, ParseError> {
         match self {
             UnaryExpr::PrimaryExpr(expr) => expr.generate_ir(ctx),
@@ -228,7 +243,9 @@ impl GenerateIR<Value> for UnaryExpr {
     }
 }
 
-impl GenerateIR<Value> for MulExpr {
+impl GenerateIR for MulExpr {
+    type Output = Value;
+
     fn generate_ir(&self, ctx: &mut Context) -> Result<Value, ParseError> {
         match self {
             MulExpr::UnaryExpr(expr) => expr.generate_ir(ctx),
@@ -246,7 +263,9 @@ impl GenerateIR<Value> for MulExpr {
     }
 }
 
-impl GenerateIR<Value> for AddExpr {
+impl GenerateIR for AddExpr {
+    type Output = Value;
+
     fn generate_ir(&self, ctx: &mut Context) -> Result<Value, ParseError> {
         match self {
             AddExpr::MulExpr(expr) => expr.generate_ir(ctx),
@@ -264,7 +283,9 @@ impl GenerateIR<Value> for AddExpr {
     }
 }
 
-impl GenerateIR<Value> for RelExpr {
+impl GenerateIR for RelExpr {
+    type Output = Value;
+
     fn generate_ir(&self, ctx: &mut Context) -> Result<Value, ParseError> {
         match self {
             RelExpr::AddExpr(expr) => expr.generate_ir(ctx),
@@ -282,7 +303,9 @@ impl GenerateIR<Value> for RelExpr {
     }
 }
 
-impl GenerateIR<Value> for EqExpr {
+impl GenerateIR for EqExpr {
+    type Output = Value;
+
     fn generate_ir(&self, ctx: &mut Context) -> Result<Value, ParseError> {
         match self {
             EqExpr::RelExpr(expr) => expr.generate_ir(ctx),
@@ -300,7 +323,9 @@ impl GenerateIR<Value> for EqExpr {
     }
 }
 
-impl GenerateIR<Value> for LAndExpr {
+impl GenerateIR for LAndExpr {
+    type Output = Value;
+
     fn generate_ir(&self, ctx: &mut Context) -> Result<Value, ParseError> {
         match self {
             LAndExpr::EqExpr(eq_expr) => eq_expr.generate_ir(ctx),
@@ -323,7 +348,9 @@ impl GenerateIR<Value> for LAndExpr {
     }
 }
 
-impl GenerateIR<Value> for LOrExpr {
+impl GenerateIR for LOrExpr {
+    type Output = Value;
+
     fn generate_ir(&self, ctx: &mut Context) -> Result<Value, ParseError> {
         match self {
             LOrExpr::LAndExpr(and_expr) => and_expr.generate_ir(ctx),
@@ -345,7 +372,9 @@ impl GenerateIR<Value> for LOrExpr {
     }
 }
 
-impl GenerateIR<()> for FuncDef {
+impl GenerateIR for FuncDef {
+    type Output = ();
+
     fn generate_ir(&self, ctx: &mut Context) -> Result<(), ParseError> {
         let ret_type = self.ret_type.into();
         let func_params = get_func_param(&self.params, &mut ctx.scope);
@@ -359,13 +388,7 @@ impl GenerateIR<()> for FuncDef {
         ctx.func = Some(func);
         for param in func_data.params() {
             let param_data = func_data.dfg().value(*param);
-            let param_name = &param_data
-                .name()
-                .clone()
-                .unwrap()
-                .chars()
-                .skip(1)
-                .collect::<String>();
+            let param_name = &param_data.name().clone().unwrap()[1..];
             ctx.scope
                 .get_identifier_mut(param_name)
                 .unwrap()
@@ -379,7 +402,9 @@ impl GenerateIR<()> for FuncDef {
     }
 }
 
-impl GenerateIR<()> for Block {
+impl GenerateIR for Block {
+    type Output = ();
+
     fn generate_ir(&self, ctx: &mut Context) -> Result<(), ParseError> {
         let bb = ctx.new_bb()?;
         let func = ctx.get_func()?;
@@ -442,7 +467,9 @@ impl GenerateIR<()> for Block {
     }
 }
 
-impl GenerateIR<()> for Assign {
+impl GenerateIR for Assign {
+    type Output = ();
+
     fn generate_ir(&self, ctx: &mut Context) -> Result<(), ParseError> {
         match self.target {
             LVal::Var(ref var) => {
@@ -465,7 +492,9 @@ impl GenerateIR<()> for Assign {
     }
 }
 
-impl GenerateIR<()> for CompUnit {
+impl GenerateIR for CompUnit {
+    type Output = ();
+
     fn generate_ir(&self, ctx: &mut Context) -> Result<(), ParseError> {
         for item in &self.items {
             match item {

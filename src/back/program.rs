@@ -93,6 +93,11 @@ impl AsmFunc {
         self.body.last_mut().unwrap()
     }
 
+    pub fn add_first_block(&mut self, block: AsmBlock) -> &mut AsmBlock {
+        self.body.insert(0, block);
+        self.body.first_mut().unwrap()
+    }
+
     pub fn blocks(&self) -> &[AsmBlock] {
         &self.body
     }
@@ -141,5 +146,26 @@ impl AsmBlock {
 
     pub fn add_inst<T: Inst + 'static>(&mut self, inst: T) {
         self.items.push(Box::new(inst));
+    }
+
+    pub fn add_insts(&mut self, insts: Vec<Box<dyn Inst>>) {
+        self.items.extend(insts);
+    }
+
+    pub fn add_insts_in_pos(&mut self, pos: usize, insts: Vec<Box<dyn Inst>>) {
+        self.items.splice(pos..pos, insts);
+    }
+
+    pub fn insts(&self) -> &[Box<dyn Inst>] {
+        &self.items
+    }
+
+    pub fn contains<T: Inst>(&self, inst: &T) -> Option<usize> {
+        for (i, item) in self.items.iter().enumerate() {
+            if item.dump().eq(&inst.dump()) {
+                return Some(i);
+            }
+        }
+        None
     }
 }

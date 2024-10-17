@@ -1,14 +1,10 @@
+#![allow(unused)]
+
 use std::fmt::Display;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 pub struct Register {
     name: &'static str,
-}
-
-impl Register {
-    pub fn name(&self) -> &'static str {
-        self.name
-    }
 }
 
 impl Display for Register {
