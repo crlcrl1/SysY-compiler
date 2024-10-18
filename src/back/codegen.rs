@@ -241,7 +241,7 @@ impl ToAsm for Store {
             ValueLocation::Register(dest) => {
                 let (mut insts, reg) = get_value(&store_value, ctx, &[]);
                 insts.push(Box::new(Move { rd: dest, rs: reg }));
-                if reg != dest {
+                if reg != dest && ctx.symbol_table.get_symbol_from_loc(&store_value).is_none() {
                     insts.extend(ctx.reg_allocator.deallocate(reg, &mut ctx.symbol_table));
                 }
                 Ok(insts)
@@ -253,7 +253,9 @@ impl ToAsm for Store {
                     offset,
                     rd: SP,
                 }));
-                insts.extend(ctx.reg_allocator.deallocate(reg, &mut ctx.symbol_table));
+                if ctx.symbol_table.get_symbol_from_loc(&store_value).is_none() {
+                    insts.extend(ctx.reg_allocator.deallocate(reg, &mut ctx.symbol_table));
+                }
                 Ok(insts)
             }
 
@@ -542,8 +544,11 @@ impl ToAsm for Return {
                     let (load, reg) = get_value(&ret_val, ctx, &[]);
                     insts.extend(load);
                     if reg != A0 {
+                        // We need to move the value to register a0.
                         insts.push(Box::new(Move { rd: A0, rs: reg }));
-                        insts.extend(ctx.reg_allocator.deallocate(reg, &mut ctx.symbol_table));
+                        if ctx.symbol_table.get_symbol_from_loc(&ret_val).is_none() {
+                            insts.extend(ctx.reg_allocator.deallocate(reg, &mut ctx.symbol_table));
+                        }
                     }
                     insts.push(Box::new(Ret));
                     return Ok(insts);
