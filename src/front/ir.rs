@@ -90,6 +90,7 @@ impl Context {
             let mut jumps = vec![];
             let mut rets = vec![];
 
+            // add jump and ret instruction
             for i in 0..bbs.len() {
                 let bb = bbs.keys().nth(i).unwrap();
                 let bb_node = bbs.node(bb).unwrap();
@@ -211,9 +212,9 @@ impl GenerateIR for VarDef {
 }
 
 impl GenerateIR for ConstDef {
-    type Output = Value;
+    type Output = ();
 
-    fn generate_ir(&self, ctx: &mut Context) -> Result<Value, ParseError> {
+    fn generate_ir(&self, ctx: &mut Context) -> Result<(), ParseError> {
         match self {
             ConstDef::NormalConstDef(normal) => {
                 if let Ok(func) = ctx.get_func() {
@@ -226,12 +227,12 @@ impl GenerateIR for ConstDef {
                     ctx.scope
                         .add_identifier(
                             normal.name.clone(),
-                            Identifier::from_constant(self.clone()),
+                            Identifier::from_constant(self.clone(), val),
                         )
                         .unwrap_or_else(|e| {
                             show_error(&format!("{:?}", e), 2);
                         });
-                    Ok(val)
+                    Ok(())
                 } else {
                     // TODO: Implement global constant
                     unimplemented!()
@@ -253,6 +254,7 @@ impl GenerateIR for LVal {
                     .get_identifier(var)
                     .ok_or(ParseError::UnknownIdentifier)?
                     .clone();
+
                 let val = match ident {
                     Identifier::Variable(ref var) => {
                         let func = ctx.get_func()?;
@@ -263,7 +265,7 @@ impl GenerateIR for LVal {
                         add_inst!(func_data, bb, load);
                         load
                     }
-                    Identifier::Constant(ref constant) => constant.def.generate_ir(ctx)?,
+                    Identifier::Constant(ref constant) => constant.koopa_def,
                     Identifier::FunctionParam(ref param) => {
                         param.koopa_def.ok_or(ParseError::UnknownIdentifier)?
                     }
@@ -533,7 +535,11 @@ impl GenerateIR for Block {
                     Stmt::Empty => {}
                 },
                 BlockItem::Decl(decl) => match decl {
-                    Decl::ConstDecl(_) => {}
+                    Decl::ConstDecl(const_decl) => {
+                        for const_def in const_decl {
+                            const_def.generate_ir(ctx)?;
+                        }
+                    }
                     Decl::VarDecl(decl) => {
                         for var_def in decl {
                             var_def.generate_ir(ctx)?;

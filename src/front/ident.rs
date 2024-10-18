@@ -10,6 +10,7 @@ pub struct Variable {
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct Constant {
+    pub koopa_def: Value,
     pub def: ConstDef,
 }
 
@@ -41,8 +42,11 @@ impl Identifier {
         })
     }
 
-    pub fn from_constant(def: ConstDef) -> Self {
-        Identifier::Constant(Constant { def })
+    pub fn from_constant(def: ConstDef, value: Value) -> Self {
+        Identifier::Constant(Constant {
+            def,
+            koopa_def: value,
+        })
     }
 
     pub fn from_function(def: FuncDef) -> Self {
