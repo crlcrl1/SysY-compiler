@@ -213,15 +213,16 @@ impl ToAsm for Jump {
     type Output = Vec<Box<dyn Inst>>;
 
     fn to_asm(&self, ctx: &mut Context, program: &Program) -> Result<Self::Output, AsmError> {
-        let func = ctx.func.ok_or(AsmError::UnknownFunction)?;
-        let func_data = program.func(func);
-        let target = func_data.dfg().bb(self.target());
-        let target_name = target
-            .name()
-            .clone()
-            .map(|name| format!(".{}_{}", &func_data.name()[1..], &name[1..]))
-            .unwrap_or(ctx.name_generator.generate_label_name());
-        Ok(vec![Box::new(Jmp { label: target_name })])
+        Ok(vec![])
+        // let func = ctx.func.ok_or(AsmError::UnknownFunction)?;
+        // let func_data = program.func(func);
+        // let target = func_data.dfg().bb(self.target());
+        // let target_name = target
+        //     .name()
+        //     .clone()
+        //     .map(|name| format!(".{}_{}", &func_data.name()[1..], &name[1..]))
+        //     .unwrap_or(ctx.name_generator.generate_label_name());
+        // Ok(vec![Box::new(Jmp { label: target_name })])
     }
 }
 
