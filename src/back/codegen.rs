@@ -21,13 +21,24 @@ pub fn generate_asm(program: Program) -> String {
     asm.dump()
 }
 
+fn label_name(func_name: &str, label: &str) -> String {
+    format!(".{}_{}", &func_name[1..], &label[1..])
+}
+
+fn variable_name(func_name: &str, var_name: &str) -> String {
+    format!("{}{}", &func_name[1..], &var_name[1..])
+}
+
 trait ToAsm {
     type Output;
     fn to_asm(&self, ctx: &mut Context, program: &Program) -> Result<Self::Output, AsmError>;
 }
 
 fn prologue_insts(ctx: &Context) -> Vec<Box<dyn Inst>> {
-    let stack_size = ctx.stack_allocator.stack_size;
+    let stack_size = (ctx.stack_allocator.stack_size + 15) / 16 * 16;
+    if stack_size == 0 {
+        return vec![];
+    }
     if stack_size <= 2048 {
         vec![Box::new(Addi {
             rd: SP,
@@ -64,7 +75,10 @@ fn epilogue_insts(ctx: &Context) -> Vec<Box<dyn Inst>> {
         }
     }
 
-    let stack_size = ctx.stack_allocator.stack_size;
+    let stack_size = (ctx.stack_allocator.stack_size + 15) / 16 * 16;
+    if stack_size == 0 {
+        return insts;
+    }
     if stack_size <= 2047 {
         insts.push(Box::new(Addi {
             rd: SP,
@@ -94,18 +108,17 @@ impl ToAsm for Function {
         // Reset the register allocator.
         ctx.reg_allocator.function_default(param_num);
         // The first character of the function name should be deleted.
-        let func_name = &func_data.name()[1..];
-        let mut func = AsmFunc::new(func_name.to_string());
+        let func_name = func_data.name();
+        let mut func = AsmFunc::new(func_name[1..].to_string());
         for (block, node) in func_data.layout().bbs() {
-            let asm_block = AsmBlock::new(
-                func_data
-                    .dfg()
-                    .bb(*block)
-                    .name()
-                    .clone()
-                    .map(|name| format!(".{}_{}", func_name, name[1..].to_string()))
-                    .unwrap_or(ctx.name_generator.generate_label_name()),
-            );
+            let label_name = func_data
+                .dfg()
+                .bb(*block)
+                .name()
+                .clone()
+                .map(|name| label_name(func_name, &name))
+                .unwrap_or(ctx.name_generator.generate_label_name());
+            let asm_block = AsmBlock::new(label_name);
             let asm_block = func.add_block(asm_block);
             for value in node.insts().keys() {
                 let insts = value.to_asm(ctx, program)?;
@@ -114,18 +127,15 @@ impl ToAsm for Function {
         }
 
         // Allocate stack space for the function and deallocate it when the function is done.
-        ctx.stack_allocator.stack_size = (ctx.stack_allocator.stack_size + 15) / 16 * 16;
-        if ctx.stack_allocator.stack_size > 0 {
-            let mut first_block = AsmBlock::new(".prologue".to_string());
-            let prologue_insts = prologue_insts(ctx);
-            first_block.add_insts(prologue_insts);
-            func.add_first_block(first_block);
+        let mut first_block = AsmBlock::new(".prologue".to_string());
+        let prologue_insts = prologue_insts(ctx);
+        first_block.add_insts(prologue_insts);
+        func.add_first_block(first_block);
 
-            for block in func.blocks_mut() {
-                if let Some(ret_pos) = block.contains(&Ret) {
-                    let leave_insts = epilogue_insts(ctx);
-                    block.add_insts_in_pos(ret_pos, leave_insts);
-                }
+        for block in func.blocks_mut() {
+            if let Some(ret_pos) = block.contains(&Ret) {
+                let leave_insts = epilogue_insts(ctx);
+                block.add_insts_in_pos(ret_pos, leave_insts);
             }
         }
         Ok(func)
@@ -160,7 +170,7 @@ impl ToAsm for Value {
                 let data_name = value_data
                     .name()
                     .clone()
-                    .map(|name| format!("{}{}", func_data.name(), &name[1..]))
+                    .map(|name| variable_name(&func_data.name(), &name))
                     .unwrap_or(ctx.name_generator.generate_indent_name());
                 let data_size = match data_type.kind() {
                     TypeKind::Int32 => 4,
@@ -213,16 +223,15 @@ impl ToAsm for Jump {
     type Output = Vec<Box<dyn Inst>>;
 
     fn to_asm(&self, ctx: &mut Context, program: &Program) -> Result<Self::Output, AsmError> {
-        Ok(vec![])
-        // let func = ctx.func.ok_or(AsmError::UnknownFunction)?;
-        // let func_data = program.func(func);
-        // let target = func_data.dfg().bb(self.target());
-        // let target_name = target
-        //     .name()
-        //     .clone()
-        //     .map(|name| format!(".{}_{}", &func_data.name()[1..], &name[1..]))
-        //     .unwrap_or(ctx.name_generator.generate_label_name());
-        // Ok(vec![Box::new(Jmp { label: target_name })])
+        let func = ctx.func.ok_or(AsmError::UnknownFunction)?;
+        let func_data = program.func(func);
+        let target = func_data.dfg().bb(self.target());
+        let target_name = target
+            .name()
+            .clone()
+            .map(|name| label_name(&func_data.name(), &name))
+            .unwrap_or(ctx.name_generator.generate_label_name());
+        Ok(vec![Box::new(Jmp { label: target_name })])
     }
 }
 
@@ -247,7 +256,7 @@ impl ToAsm for Store {
             .value(self.dest())
             .name()
             .clone()
-            .map(|name| format!("{}{}", func_data.name(), &name[1..]))
+            .map(|name| variable_name(&func_data.name(), &name))
             .ok_or(AsmError::NoNameStore)?;
         let dest = ctx
             .symbol_table
@@ -293,7 +302,7 @@ impl ToAsm for Load {
             .value(self.src())
             .name()
             .clone()
-            .map(|name| format!("{}{}", func_name, &name[1..]))
+            .map(|name| variable_name(&func_name, &name))
             .ok_or(AsmError::NoNameLoad)?;
         let location = ctx
             .symbol_table
