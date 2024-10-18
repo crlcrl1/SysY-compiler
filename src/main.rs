@@ -20,7 +20,7 @@ fn main() {
     let comp_unit = parser
         .parse(&mut context, &input)
         .unwrap_or_else(|e| show_parse_error(e, &input, &params.input));
-    let program = generate_ir(comp_unit, context.identifier_table);
+    let program = generate_ir(comp_unit);
     if params.koopa {
         KoopaGenerator::from_path(&params.output)
             .unwrap()

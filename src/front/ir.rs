@@ -3,13 +3,13 @@ pub mod macros;
 pub mod scope;
 
 use crate::front::ast::*;
-use crate::front::ident_table::Identifier;
+use crate::front::ident::Identifier;
 use crate::front::ir::eval::Eval;
 use crate::front::ir::scope::Scope;
 use crate::util::logger::show_error;
 use crate::{add_bb, add_inst, new_bb, new_value};
 use koopa::ir::builder::{BasicBlockBuilder, LocalInstBuilder, ValueBuilder};
-use koopa::ir::{BasicBlock, BinaryOp, Function, FunctionData, Program, Type, Value};
+use koopa::ir::{BasicBlock, BinaryOp, Function, FunctionData, Program, Type, Value, ValueKind};
 use std::rc::Rc;
 
 pub struct Context {
@@ -49,6 +49,75 @@ impl Context {
 
     pub fn program(self) -> Program {
         self.program
+    }
+
+    pub fn delete_unused_bb(&mut self) {
+        for (_, func_data) in self.program.funcs_mut() {
+            // get all jump and branch target
+            let mut target = vec![];
+            for (_, bb_node) in func_data.layout().bbs() {
+                for value in bb_node.insts().keys() {
+                    let value_data = func_data.dfg().value(*value);
+                    match value_data.kind() {
+                        ValueKind::Branch(branch) => {
+                            target.push(branch.true_bb());
+                            target.push(branch.false_bb());
+                        }
+                        ValueKind::Jump(jump) => {
+                            target.push(jump.target());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            let entry_bb = func_data.layout().entry_bb().unwrap();
+            if !target.contains(&entry_bb) {
+                target.push(entry_bb);
+            }
+
+            // delete empty basic block
+            let mut bb_to_delete = vec![];
+            for (bb_id, bb_node) in func_data.layout().bbs() {
+                if bb_node.insts().is_empty() && !target.contains(&bb_id) {
+                    bb_to_delete.push(*bb_id);
+                }
+            }
+            for bb_id in bb_to_delete {
+                func_data.layout_mut().bbs_mut().remove(&bb_id);
+            }
+
+            let bbs = func_data.layout().bbs();
+            let mut jumps = vec![];
+            let mut rets = vec![];
+
+            for i in 0..bbs.len() {
+                let bb = bbs.keys().nth(i).unwrap();
+                let bb_node = bbs.node(bb).unwrap();
+                if let Some(last_inst) = bb_node.insts().keys().last() {
+                    let last_inst = func_data.dfg().value(*last_inst);
+                    match last_inst.kind() {
+                        ValueKind::Branch(_) | ValueKind::Return(_) | ValueKind::Jump(_) => {
+                            continue;
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some(next_bb) = bbs.keys().nth(i + 1) {
+                    jumps.push((*bb, *next_bb));
+                } else {
+                    rets.push(*bb);
+                }
+            }
+
+            jumps.iter().for_each(|(a, b)| {
+                let jump = new_value!(func_data).jump(*b);
+                add_inst!(func_data, *a, jump);
+            });
+            rets.iter().for_each(|bb| {
+                let ret = new_value!(func_data).ret(None);
+                add_inst!(func_data, *bb, ret);
+            });
+        }
     }
 }
 
@@ -104,10 +173,7 @@ impl GenerateIR for VarDef {
                     let func_data = ctx.program.func_mut(func);
                     // allocate variable
                     let var_alloc = new_value!(func_data).alloc(Type::get_i32());
-                    ctx.scope
-                        .get_identifier_mut(&normal_var_def.name)
-                        .unwrap()
-                        .set_koopa_def(var_alloc);
+
                     func_data
                         .dfg_mut()
                         .set_value_name(var_alloc, Some(var_name));
@@ -120,6 +186,18 @@ impl GenerateIR for VarDef {
                         let store = new_value!(func_data).store(init, var_alloc);
                         add_inst!(func_data, bb, store);
                     }
+                    ctx.scope
+                        .add_identifier(
+                            normal_var_def.name.clone(),
+                            Identifier::from_variable(self.clone()),
+                        )
+                        .unwrap_or_else(|e| {
+                            show_error(&format!("{:?}", e), 2);
+                        });
+                    ctx.scope
+                        .get_identifier_mut(&normal_var_def.name)
+                        .unwrap()
+                        .set_koopa_def(var_alloc);
                     Ok(var_alloc)
                 } else {
                     unimplemented!()
@@ -382,9 +460,7 @@ impl GenerateIR for FuncDef {
             FunctionData::with_param_names("@".to_string() + &self.name, func_params, ret_type);
         let func = ctx.program.new_func(func_data);
         let func_data = ctx.program.func_mut(func);
-        if let Err(msg) = ctx.scope.go_into_scoop(self.body.id) {
-            show_error(&msg, 2);
-        }
+        ctx.scope.go_into_scoop(self.body.id);
         ctx.func = Some(func);
         for param in func_data.params() {
             let param_data = func_data.dfg().value(*param);
@@ -395,9 +471,7 @@ impl GenerateIR for FuncDef {
                 .set_koopa_def(*param);
         }
         self.body.generate_ir(ctx)?;
-        if let Err(msg) = ctx.scope.go_out_scoop() {
-            show_error(&msg, 2);
-        }
+        ctx.scope.go_out_scoop();
         Ok(())
     }
 }
@@ -417,17 +491,14 @@ impl GenerateIR for Block {
                     Stmt::Assign(assign) => assign.generate_ir(ctx)?,
                     Stmt::Expr(expr) => expr.generate_ir(ctx).map(|_| ())?,
                     Stmt::Block(block) => {
-                        ctx.scope
-                            .go_into_scoop(block.id)
-                            .map_err(|_| ParseError::InvalidExpr)?;
+                        ctx.scope.go_into_scoop(block.id);
                         block.generate_ir(ctx)?;
-                        ctx.scope
-                            .go_out_scoop()
-                            .map_err(|_| ParseError::InvalidExpr)?;
+                        ctx.scope.go_out_scoop();
                     }
                     Stmt::If(_) => {}
                     Stmt::While(_) => {}
                     Stmt::Return(ret) => {
+                        let bb = ctx.get_bb()?;
                         let func = ctx.get_func()?;
                         let func_data = ctx.program.func_mut(func);
                         if let Some(expr) = ret {
@@ -463,6 +534,11 @@ impl GenerateIR for Block {
                 },
             }
         }
+        let bb = ctx.new_bb()?;
+        let func = ctx.get_func()?;
+        let func_data = ctx.program.func_mut(func);
+        add_bb!(func_data, bb);
+        ctx.current_bb = Some(bb);
         Ok(())
     }
 }

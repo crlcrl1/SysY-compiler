@@ -3,7 +3,7 @@ use crate::back::inst::*;
 use crate::back::program::{AsmBlock, AsmFunc, AsmProgram, Assembly};
 use crate::back::register::*;
 use crate::util::logger::show_error;
-use koopa::ir::values::{Binary, Load, Return, Store};
+use koopa::ir::values::{Binary, Jump, Load, Return, Store};
 use koopa::ir::{BinaryOp, Function, Program, TypeKind, Value, ValueKind};
 
 pub fn generate_asm(program: Program) -> String {
@@ -202,10 +202,26 @@ impl ToAsm for Value {
                 Ok(insts)
             }
             ValueKind::Branch(_) => unimplemented!(),
-            ValueKind::Jump(_) => unimplemented!(),
+            ValueKind::Jump(jump) => jump.to_asm(ctx, program),
             ValueKind::Call(_) => unimplemented!(),
             ValueKind::Return(ret) => ret.to_asm(ctx, program),
         }
+    }
+}
+
+impl ToAsm for Jump {
+    type Output = Vec<Box<dyn Inst>>;
+
+    fn to_asm(&self, ctx: &mut Context, program: &Program) -> Result<Self::Output, AsmError> {
+        let func = ctx.func.ok_or(AsmError::UnknownFunction)?;
+        let func_data = program.func(func);
+        let target = func_data.dfg().bb(self.target());
+        let target_name = target
+            .name()
+            .clone()
+            .map(|name| format!(".{}_{}", &func_data.name()[1..], &name[1..]))
+            .unwrap_or(ctx.name_generator.generate_label_name());
+        Ok(vec![Box::new(Jmp { label: target_name })])
     }
 }
 
@@ -360,152 +376,49 @@ impl ToAsm for Binary {
         );
         insts.extend(temp_inst);
 
+        let rs1 = lhs_reg;
+        let rs2 = rhs_reg;
+        let rd = temp_reg;
         // Calculate the result.
         let cal_insts: Vec<Box<dyn Inst>> = match self.op() {
             BinaryOp::NotEq => {
                 vec![
-                    Box::new(Xor {
-                        rd: temp_reg,
-                        rs1: lhs_reg,
-                        rs2: rhs_reg,
-                    }),
-                    Box::new(SetNonZero {
-                        rd: temp_reg,
-                        rs: temp_reg,
-                    }),
+                    Box::new(Xor { rd, rs1, rs2 }),
+                    Box::new(SetNonZero { rd, rs: rd }),
                 ]
             }
             BinaryOp::Eq => {
                 vec![
-                    Box::new(Xor {
-                        rd: temp_reg,
-                        rs1: lhs_reg,
-                        rs2: rhs_reg,
-                    }),
-                    Box::new(SetZero {
-                        rd: temp_reg,
-                        rs: temp_reg,
-                    }),
+                    Box::new(Xor { rd, rs1, rs2 }),
+                    Box::new(SetZero { rd, rs: rd }),
                 ]
             }
-            BinaryOp::Gt => {
-                vec![Box::new(SetGt {
-                    rd: temp_reg,
-                    rs1: lhs_reg,
-                    rs2: rhs_reg,
-                })]
-            }
-            BinaryOp::Lt => {
-                vec![Box::new(SetLt {
-                    rd: temp_reg,
-                    rs1: lhs_reg,
-                    rs2: rhs_reg,
-                })]
-            }
+            BinaryOp::Gt => vec![Box::new(SetGt { rd, rs1, rs2 })],
+            BinaryOp::Lt => vec![Box::new(SetLt { rd, rs1, rs2 })],
             BinaryOp::Ge => {
                 vec![
-                    Box::new(SetLt {
-                        rd: temp_reg,
-                        rs1: lhs_reg,
-                        rs2: rhs_reg,
-                    }),
-                    Box::new(SetZero {
-                        rd: temp_reg,
-                        rs: temp_reg,
-                    }),
+                    Box::new(SetLt { rd, rs1, rs2 }),
+                    Box::new(SetZero { rd, rs: rd }),
                 ]
             }
             BinaryOp::Le => {
                 vec![
-                    Box::new(SetGt {
-                        rd: temp_reg,
-                        rs1: lhs_reg,
-                        rs2: rhs_reg,
-                    }),
-                    Box::new(SetZero {
-                        rd: temp_reg,
-                        rs: temp_reg,
-                    }),
+                    Box::new(SetGt { rd, rs1, rs2 }),
+                    Box::new(SetZero { rd, rs: rd }),
                 ]
             }
             // TODO: Optimize for immediate values.
-            BinaryOp::Add => {
-                vec![Box::new(Add {
-                    rd: temp_reg,
-                    rs1: lhs_reg,
-                    rs2: rhs_reg,
-                })]
-            }
-            BinaryOp::Sub => {
-                vec![Box::new(Sub {
-                    rd: temp_reg,
-                    rs1: lhs_reg,
-                    rs2: rhs_reg,
-                })]
-            }
-            BinaryOp::Mul => {
-                vec![Box::new(Mul {
-                    rd: temp_reg,
-                    rs1: lhs_reg,
-                    rs2: rhs_reg,
-                })]
-            }
-            BinaryOp::Div => {
-                vec![Box::new(Div {
-                    rd: temp_reg,
-                    rs1: lhs_reg,
-                    rs2: rhs_reg,
-                })]
-            }
-            BinaryOp::Mod => {
-                vec![Box::new(Rem {
-                    rd: temp_reg,
-                    rs1: lhs_reg,
-                    rs2: rhs_reg,
-                })]
-            }
-            BinaryOp::And => {
-                vec![Box::new(And {
-                    rd: temp_reg,
-                    rs1: lhs_reg,
-                    rs2: rhs_reg,
-                })]
-            }
-            BinaryOp::Or => {
-                vec![Box::new(Or {
-                    rd: temp_reg,
-                    rs1: lhs_reg,
-                    rs2: rhs_reg,
-                })]
-            }
-            BinaryOp::Xor => {
-                vec![Box::new(Xor {
-                    rd: temp_reg,
-                    rs1: lhs_reg,
-                    rs2: rhs_reg,
-                })]
-            }
-            BinaryOp::Shl => {
-                vec![Box::new(Sll {
-                    rd: temp_reg,
-                    rs1: lhs_reg,
-                    rs2: rhs_reg,
-                })]
-            }
-            BinaryOp::Shr => {
-                vec![Box::new(Srl {
-                    rd: temp_reg,
-                    rs1: lhs_reg,
-                    rs2: rhs_reg,
-                })]
-            }
-            BinaryOp::Sar => {
-                vec![Box::new(Sra {
-                    rd: temp_reg,
-                    rs1: lhs_reg,
-                    rs2: rhs_reg,
-                })]
-            }
+            BinaryOp::Add => vec![Box::new(Add { rd, rs1, rs2 })],
+            BinaryOp::Sub => vec![Box::new(Sub { rd, rs1, rs2 })],
+            BinaryOp::Mul => vec![Box::new(Mul { rd, rs1, rs2 })],
+            BinaryOp::Div => vec![Box::new(Div { rd, rs1, rs2 })],
+            BinaryOp::Mod => vec![Box::new(Rem { rd, rs1, rs2 })],
+            BinaryOp::And => vec![Box::new(And { rd, rs1, rs2 })],
+            BinaryOp::Or => vec![Box::new(Or { rd, rs1, rs2 })],
+            BinaryOp::Xor => vec![Box::new(Xor { rd, rs1, rs2 })],
+            BinaryOp::Shl => vec![Box::new(Sll { rd, rs1, rs2 })],
+            BinaryOp::Shr => vec![Box::new(Srl { rd, rs1, rs2 })],
+            BinaryOp::Sar => vec![Box::new(Sra { rd, rs1, rs2 })],
         };
 
         insts.extend(cal_insts);
@@ -516,7 +429,7 @@ impl ToAsm for Binary {
         if rhs_reg != temp_reg && ctx.symbol_table.get_symbol_from_loc(&rhs_loc).is_none() {
             insts.extend(ctx.reg_allocator.deallocate(rhs_reg, &mut ctx.symbol_table));
         }
-        let temp_val = ValueLocation::Register(temp_reg);
+        let temp_val = ValueLocation::Register(rd);
         Ok((insts, temp_val))
     }
 }

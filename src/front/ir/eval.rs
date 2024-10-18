@@ -1,5 +1,5 @@
 use crate::front::ast::*;
-use crate::front::ident_table::Identifier;
+use crate::front::ident::Identifier;
 use crate::front::ir::scope::Scope;
 use crate::util::logger::show_error;
 
@@ -152,7 +152,7 @@ impl Eval for LVal {
                 if let Some(id) = scope.get_identifier(var) {
                     let id = id.clone();
                     match id {
-                        Identifier::Constant(constant) => match *constant.def {
+                        Identifier::Constant(constant) => match constant.def {
                             ConstDef::NormalConstDef(ref const_def) => const_def.value.eval(scope),
                             ConstDef::ArrayConstDef(_) => Err(EvalError::NotSupportedVariable),
                         },

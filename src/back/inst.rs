@@ -48,7 +48,7 @@ pub struct Bnez {
 
 #[derive(Debug, Clone, Inst, Eq, PartialEq)]
 #[asm_name = "j"]
-pub struct Jump {
+pub struct Jmp {
     pub label: String,
 }
 

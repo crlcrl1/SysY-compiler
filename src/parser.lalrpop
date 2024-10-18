@@ -1,6 +1,6 @@
 use crate::front::ast::*;
 use crate::front::parser_context::ParserContext;
-use crate::front::ident_table::Identifier;
+use crate::front::ident::Identifier;
 use crate::util::logger::show_error_range;
 use std::str::FromStr;
 use std::process::exit;
@@ -87,7 +87,6 @@ FuncDef: Rc<FuncDef> = {
             body: b,
         };
         let def = Rc::new(def);
-        context.identifier_table.insert(Identifier::from_function(def.clone(), (l, r)));
         def
     },
 };
@@ -97,8 +96,6 @@ FuncFParam: Rc<FuncFParam> = {
         let param = Rc::new(FuncFParam::NormalFParam(NormalFParam{
             name: s,
         }));
-        let scope = context.generator.get_next_id();
-        context.identifier_table.insert(Identifier::from_function_param(param.clone(), scope, (l, r)));
         param
     },
 
@@ -108,8 +105,6 @@ FuncFParam: Rc<FuncFParam> = {
             placeholder: true,
             shape: a_shape,
         }));
-        let scope = context.generator.get_next_id();
-        context.identifier_table.insert(Identifier::from_function_param(param.clone(), scope, (l, r)));
         param
     },
 
@@ -119,8 +114,6 @@ FuncFParam: Rc<FuncFParam> = {
             placeholder: false,
             shape: a_shape,
         }));
-        let scope = context.generator.get_next_id();
-        context.identifier_table.insert(Identifier::from_function_param(param.clone(), scope, (l, r)));
         param
     },
 };
@@ -202,8 +195,6 @@ VarDecl: Vec<Rc<VarDef>> = {
                 name: h.1,
                 value: init,
             }));
-            let scope = context.generator.get_current_id();
-            context.identifier_table.insert(Identifier::from_variable(first.clone(), scope, (h.2, h.3)));
             v.insert(0, first);
             v
         },
@@ -220,8 +211,6 @@ VarDecl: Vec<Rc<VarDef>> = {
                 shape: a_shape,
                 values: ar,
             }));
-            let scope = context.generator.get_current_id();
-            context.identifier_table.insert(Identifier::from_variable(first.clone(), scope, (h.2, h.3)));
             v.insert(0, first);
             v
         },
@@ -234,8 +223,6 @@ ConstDef: Rc<ConstDef> = {
             name: s,
             value: v,
         }));
-        let scope = context.generator.get_current_id();
-        context.identifier_table.insert(Identifier::from_constant(def.clone(), scope, (l, r)));
         def
     },
 
@@ -245,8 +232,6 @@ ConstDef: Rc<ConstDef> = {
             shape: a_shape,
             values: a,
         }));
-        let scope = context.generator.get_current_id();
-        context.identifier_table.insert(Identifier::from_constant(def.clone(), scope, (l, r)));
         def
     },
 };
@@ -266,8 +251,6 @@ VarDef: Rc<VarDef> = {
             name: s,
             value: init,
         }));
-        let scope = context.generator.get_current_id();
-        context.identifier_table.insert(Identifier::from_variable(def.clone(), scope, (l, r)));
         def
     },
 
@@ -277,8 +260,6 @@ VarDef: Rc<VarDef> = {
             shape: a_shape,
             values: init,
         }));
-        let scope = context.generator.get_current_id();
-        context.identifier_table.insert(Identifier::from_variable(def.clone(), scope, (l, r)));
         def
     },
 };

@@ -1,5 +1,3 @@
-use crate::front::ident_table::IdentifierTable;
-
 #[derive(Clone)]
 pub struct BlockIdGenerator {
     max_id: i32,
@@ -36,7 +34,6 @@ impl BlockIdGenerator {
 #[derive(Clone)]
 pub struct ParserContext<'a> {
     pub generator: BlockIdGenerator,
-    pub identifier_table: IdentifierTable,
     pub file_path: &'a str,
     pub input: &'a str,
 }
@@ -45,7 +42,6 @@ impl<'a> ParserContext<'a> {
     pub fn new(file_path: &'a str, input: &'a str) -> Self {
         ParserContext {
             generator: BlockIdGenerator::new(),
-            identifier_table: IdentifierTable::new(),
             file_path,
             input,
         }
