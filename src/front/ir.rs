@@ -223,6 +223,14 @@ impl GenerateIR for ConstDef {
                         .map_err(|_| ParseError::ConstExprError)?;
                     let func_data = ctx.program.func_mut(func);
                     let val = new_value!(func_data).integer(val);
+                    ctx.scope
+                        .add_identifier(
+                            normal.name.clone(),
+                            Identifier::from_constant(self.clone()),
+                        )
+                        .unwrap_or_else(|e| {
+                            show_error(&format!("{:?}", e), 2);
+                        });
                     Ok(val)
                 } else {
                     // TODO: Implement global constant
