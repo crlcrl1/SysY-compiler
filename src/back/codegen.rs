@@ -136,8 +136,6 @@ impl ToAsm for Value {
         let func = ctx.func.ok_or(AsmError::UnknownFunction)?;
         let value_data = program.func(func).dfg().value(*self);
 
-        println!("value: {:?}, value_data: {:?}", self, value_data);
-
         match value_data.kind() {
             ValueKind::Integer(n) => {
                 let value = n.value();
@@ -197,7 +195,6 @@ impl ToAsm for Value {
             ValueKind::GetElemPtr(_) => unimplemented!(),
             ValueKind::Binary(binary) => {
                 let (insts, temp_value) = binary.to_asm(ctx, program)?;
-                println!("temp_value: {:?}", temp_value);
                 ctx.temp_value_table.insert(*self, temp_value);
                 Ok(insts)
             }
