@@ -37,7 +37,7 @@ pub struct StackAllocator {
 impl StackAllocator {
     pub fn allocate(&mut self, size: i32) -> i32 {
         self.stack_size += size;
-        -self.stack_size
+        self.stack_size - size
     }
 }
 

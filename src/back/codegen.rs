@@ -14,7 +14,7 @@ pub fn generate_asm(program: Program) -> String {
     for func in functions {
         ctx.func = Some(func);
         asm.add_func_decl(func.to_asm(&mut ctx, &program).unwrap_or_else(|e| {
-            show_error(&format!("{:?}", e), 2);
+            show_error(&format!("{:?}", e), 3);
         }));
         ctx.func = None;
     }
@@ -101,7 +101,7 @@ impl ToAsm for Function {
                     .name()
                     .clone()
                     .map(|name| format!(".{}_{}", func_name, name[1..].to_string()))
-                    .unwrap_or(".L0".to_string()),
+                    .unwrap_or(ctx.name_generator.generate_label_name()),
             );
             let asm_block = func.add_block(asm_block);
             for value in node.insts().keys() {
@@ -215,16 +215,7 @@ impl ToAsm for Store {
         let value = self.value();
         let store_value = func_data.dfg().value(value);
         let store_value = match store_value.ty().kind() {
-            TypeKind::Int32 => {
-                if let ValueKind::Integer(c) = store_value.kind() {
-                    ValueLocation::Immediate(c.value())
-                } else {
-                    ctx.temp_value_table
-                        .get(&value)
-                        .ok_or(AsmError::NoTempValue)?
-                        .clone()
-                }
-            }
+            TypeKind::Int32 => get_location(value, ctx, program)?,
             _ => ctx
                 .temp_value_table
                 .get(&value)
@@ -324,25 +315,33 @@ fn get_value(
     }
 }
 
+fn get_location(value: Value, ctx: &Context, program: &Program) -> Result<ValueLocation, AsmError> {
+    let func = ctx.func.ok_or(AsmError::UnknownFunction)?;
+    let func_data = program.func(func);
+    let value_data = func_data.dfg().value(value);
+    if let ValueKind::Integer(c) = value_data.kind() {
+        Ok(ValueLocation::Immediate(c.value()))
+    } else {
+        Ok(ctx
+            .temp_value_table
+            .get(&value)
+            .ok_or(AsmError::NoTempValue)?
+            .clone())
+    }
+}
+
 impl ToAsm for Binary {
     type Output = (Vec<Box<dyn Inst>>, ValueLocation);
 
-    fn to_asm(&self, ctx: &mut Context, _: &Program) -> Result<Self::Output, AsmError> {
+    fn to_asm(&self, ctx: &mut Context, program: &Program) -> Result<Self::Output, AsmError> {
         let lhs = self.lhs();
         let rhs = self.rhs();
         let mut insts: Vec<Box<dyn Inst>> = vec![];
 
         // Pop the temporary value location from the stack.
-        let rhs_loc = ctx
-            .temp_value_table
-            .get(&rhs)
-            .ok_or(AsmError::NoTempValue)?
-            .clone();
-        let lhs_loc = ctx
-            .temp_value_table
-            .get(&lhs)
-            .ok_or(AsmError::NoTempValue)?
-            .clone();
+        let lhs_loc = get_location(lhs, ctx, program)?;
+        let rhs_loc = get_location(rhs, ctx, program)?;
+
         let (load_lhs, lhs_reg) = get_value(&lhs_loc, ctx, &[]);
         let (load_rhs, rhs_reg) = get_value(&rhs_loc, ctx, &[lhs_reg]);
         insts.extend(load_lhs);
@@ -530,7 +529,7 @@ impl ToAsm for Return {
                     rd: A0,
                     imm: c.value(),
                 })),
-                ValueKind::Binary(_) => {
+                ValueKind::Binary(_) | ValueKind::Load(_) => {
                     let mut insts: Vec<Box<dyn Inst>> = vec![];
                     let ret_val = ctx
                         .temp_value_table
