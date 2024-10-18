@@ -48,7 +48,7 @@ fn inst_macro_impl(ast: DeriveInput) -> TokenStream {
     let mut i = 0;
     while i < field_count {
         if fields[i] == "offset" {
-            format_str.push_str(" ({}){},");
+            format_str.push_str(" {}({}),");
             i += 2;
         } else {
             format_str.push_str(" {},");

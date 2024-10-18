@@ -165,6 +165,7 @@ impl RegisterAllocator {
         stack_allocator: &mut StackAllocator,
         used_registers: &[Register],
         symbol_table: &mut SymbolTable,
+        temp_value_location: &mut HashMap<Value, ValueLocation>,
     ) -> (Register, Vec<Box<dyn Inst>>) {
         self.try_allocate().map(|r| (r, vec![])).unwrap_or_else(|| {
             let reg = *ALL_REGISTERS
@@ -172,8 +173,18 @@ impl RegisterAllocator {
                 .find(|r| !used_registers.contains(r))
                 .unwrap();
             let offset = stack_allocator.allocate(4);
+            // If a symbol is found, update the symbol table.
             if let Some(name) = symbol_table.get_symbol_from_loc(&ValueLocation::Register(reg)) {
                 symbol_table.insert(name.to_string(), ValueLocation::Stack(offset));
+            }
+            // If a temp value is found, update the temp value location.
+            for (_, loc) in temp_value_location.iter_mut() {
+                if let ValueLocation::Register(r) = loc {
+                    if *r == reg {
+                        *loc = ValueLocation::Stack(offset);
+                        break;
+                    }
+                }
             }
             self.used.insert(reg, (true, Some(offset)));
             let vec: Vec<Box<dyn Inst>> = vec![Box::new(Sw {
@@ -190,11 +201,24 @@ impl RegisterAllocator {
         &mut self,
         reg: Register,
         symbol_table: &mut SymbolTable,
+        temp_value_location: &mut HashMap<Value, ValueLocation>,
     ) -> Vec<Box<dyn Inst>> {
         if let Some(offset) = self.used.insert(reg, (false, None)).unwrap().1 {
             // If a symbol is found, update the symbol table.
             if let Some(name) = symbol_table.get_symbol_from_loc(&ValueLocation::Stack(offset)) {
                 symbol_table.insert(name.to_string(), ValueLocation::Register(reg));
+                // The register is in use as a symbol, so it is busy.
+                self.used.insert(reg, (true, None));
+            }
+            // If a temp value is found, update the temp value location.
+            for (_, loc) in temp_value_location.iter_mut() {
+                if let ValueLocation::Stack(o) = loc {
+                    if *o == offset {
+                        *loc = ValueLocation::Register(reg);
+                        self.used.insert(reg, (true, None));
+                        break;
+                    }
+                }
             }
             vec![Box::new(Lw {
                 rd: reg,
