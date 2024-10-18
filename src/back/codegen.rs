@@ -1,4 +1,4 @@
-use crate::back::context::{AsmError, Context, ValueLocation};
+use crate::back::context::{AsmError, Context, ValueLocation, CALLEE_SAVED_REGISTERS};
 use crate::back::inst::*;
 use crate::back::program::{AsmBlock, AsmFunc, AsmProgram, Assembly};
 use crate::back::register::*;
@@ -52,6 +52,9 @@ fn prologue_insts(ctx: &Context) -> Vec<Box<dyn Inst>> {
 fn epilogue_insts(ctx: &Context) -> Vec<Box<dyn Inst>> {
     let mut insts: Vec<Box<dyn Inst>> = vec![];
     for (reg, offset) in ctx.reg_allocator.used_registers() {
+        if !CALLEE_SAVED_REGISTERS.contains(&reg) {
+            continue;
+        }
         if let Some(offset) = offset {
             insts.push(Box::new(Sw {
                 rs: reg,

@@ -83,14 +83,15 @@ impl Default for RegisterAllocator {
     }
 }
 
-const CALLEE_SAVED_REGISTERS: [Register; 12] = [S0, S1, S2, S3, S4, S5, S6, S7, S8, S9, S10, S11];
+pub const CALLEE_SAVED_REGISTERS: [Register; 12] =
+    [S0, S1, S2, S3, S4, S5, S6, S7, S8, S9, S10, S11];
 
-const ALL_REGISTERS: [Register; 27] = [
+pub const ALL_REGISTERS: [Register; 27] = [
     A0, A1, A2, A3, A4, A5, A6, A7, S0, S1, S2, S3, S4, S5, S6, S7, S8, S9, S10, S11, T0, T1, T2,
     T3, T4, T5, T6,
 ];
 
-const ARGUMENT_REGISTERS: [Register; 8] = [A0, A1, A2, A3, A4, A5, A6, A7];
+pub const ARGUMENT_REGISTERS: [Register; 8] = [A0, A1, A2, A3, A4, A5, A6, A7];
 
 impl RegisterAllocator {
     pub fn new() -> Self {
