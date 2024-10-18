@@ -3,9 +3,8 @@ use crate::back::inst::*;
 use crate::back::program::{AsmBlock, AsmFunc, AsmProgram, Assembly};
 use crate::back::register::*;
 use crate::util::logger::show_error;
-use koopa::ir::entities::ValueData;
 use koopa::ir::values::{Binary, Load, Return, Store};
-use koopa::ir::{BinaryOp, Function, Program, TypeKind, ValueKind};
+use koopa::ir::{BinaryOp, Function, Program, TypeKind, Value, ValueKind};
 
 pub fn generate_asm(program: Program) -> String {
     let functions = program.func_layout().to_vec();
@@ -105,10 +104,8 @@ impl ToAsm for Function {
                     .unwrap_or(".L0".to_string()),
             );
             let asm_block = func.add_block(asm_block);
-            for inst in node.insts().keys() {
-                // TODO: Delete redundant instructions.
-                let value_data = func_data.dfg().value(*inst);
-                let insts = value_data.to_asm(ctx, program)?;
+            for value in node.insts().keys() {
+                let insts = value.to_asm(ctx, program)?;
                 asm_block.add_insts(insts);
             }
         }
@@ -132,18 +129,21 @@ impl ToAsm for Function {
     }
 }
 
-impl ToAsm for ValueData {
+impl ToAsm for Value {
     type Output = Vec<Box<dyn Inst>>;
 
     fn to_asm(&self, ctx: &mut Context, program: &Program) -> Result<Self::Output, AsmError> {
-        match self.kind() {
+        let func = ctx.func.ok_or(AsmError::UnknownFunction)?;
+        let value_data = program.func(func).dfg().value(*self);
+
+        match value_data.kind() {
             ValueKind::Integer(n) => {
                 let value = n.value();
                 let location = match value {
                     0 => ValueLocation::Register(ZERO),
                     _ => ValueLocation::Immediate(value),
                 };
-                ctx.temp_value_location.push(location);
+                ctx.temp_value_table.insert(*self, location);
                 Ok(vec![])
             }
             ValueKind::ZeroInit(_) => unimplemented!(),
@@ -153,8 +153,8 @@ impl ToAsm for ValueData {
             ValueKind::BlockArgRef(_) => unimplemented!(),
             ValueKind::Alloc(_) => {
                 let func_data = program.func(ctx.func.ok_or(AsmError::UnknownFunction)?);
-                let data_type = self.ty();
-                let data_name = self
+                let data_type = value_data.ty();
+                let data_name = value_data
                     .name()
                     .clone()
                     .map(|name| format!("{}{}", func_data.name(), &name[1..]))
@@ -185,11 +185,19 @@ impl ToAsm for ValueData {
                 }
             }
             ValueKind::GlobalAlloc(_) => unimplemented!(),
-            ValueKind::Load(load) => load.to_asm(ctx, program),
+            ValueKind::Load(load) => {
+                let (insts, temp_value) = load.to_asm(ctx, program)?;
+                ctx.temp_value_table.insert(*self, temp_value);
+                Ok(insts)
+            }
             ValueKind::Store(store) => store.to_asm(ctx, program),
             ValueKind::GetPtr(_) => unimplemented!(),
             ValueKind::GetElemPtr(_) => unimplemented!(),
-            ValueKind::Binary(binary) => binary.to_asm(ctx, program),
+            ValueKind::Binary(binary) => {
+                let (insts, temp_value) = binary.to_asm(ctx, program)?;
+                ctx.temp_value_table.insert(*self, temp_value);
+                Ok(insts)
+            }
             ValueKind::Branch(_) => unimplemented!(),
             ValueKind::Jump(_) => unimplemented!(),
             ValueKind::Call(_) => unimplemented!(),
@@ -204,16 +212,24 @@ impl ToAsm for Store {
     fn to_asm(&self, ctx: &mut Context, program: &Program) -> Result<Self::Output, AsmError> {
         let func = ctx.func.ok_or(AsmError::UnknownFunction)?;
         let func_data = program.func(func);
-        let store_value = func_data.dfg().value(self.value());
+        let value = self.value();
+        let store_value = func_data.dfg().value(value);
         let store_value = match store_value.ty().kind() {
             TypeKind::Int32 => {
                 if let ValueKind::Integer(c) = store_value.kind() {
                     ValueLocation::Immediate(c.value())
                 } else {
-                    ctx.temp_value_location.pop().ok_or(AsmError::NoTempValue)?
+                    ctx.temp_value_table
+                        .get(&value)
+                        .ok_or(AsmError::NoTempValue)?
+                        .clone()
                 }
             }
-            _ => ctx.temp_value_location.pop().ok_or(AsmError::NoTempValue)?,
+            _ => ctx
+                .temp_value_table
+                .get(&value)
+                .ok_or(AsmError::NoTempValue)?
+                .clone(),
         };
         let dest = func_data
             .dfg()
@@ -253,7 +269,7 @@ impl ToAsm for Store {
 }
 
 impl ToAsm for Load {
-    type Output = Vec<Box<dyn Inst>>;
+    type Output = (Vec<Box<dyn Inst>>, ValueLocation);
 
     fn to_asm(&self, ctx: &mut Context, program: &Program) -> Result<Self::Output, AsmError> {
         let func = ctx.func.ok_or(AsmError::UnknownFunction)?;
@@ -272,8 +288,7 @@ impl ToAsm for Load {
             .ok_or(AsmError::NoSymbol)?
             .clone();
         let (insts, reg) = get_value(&location, ctx, &[]);
-        ctx.temp_value_location.push(ValueLocation::Register(reg));
-        Ok(insts)
+        Ok((insts, ValueLocation::Register(reg)))
     }
 }
 
@@ -310,30 +325,24 @@ fn get_value(
 }
 
 impl ToAsm for Binary {
-    type Output = Vec<Box<dyn Inst>>;
+    type Output = (Vec<Box<dyn Inst>>, ValueLocation);
 
-    fn to_asm(&self, ctx: &mut Context, program: &Program) -> Result<Self::Output, AsmError> {
+    fn to_asm(&self, ctx: &mut Context, _: &Program) -> Result<Self::Output, AsmError> {
         let lhs = self.lhs();
         let rhs = self.rhs();
-        let lhs_data = program
-            .func(ctx.func.ok_or(AsmError::UnknownFunction)?)
-            .dfg()
-            .value(lhs);
-        let rhs_data = program
-            .func(ctx.func.ok_or(AsmError::UnknownFunction)?)
-            .dfg()
-            .value(rhs);
         let mut insts: Vec<Box<dyn Inst>> = vec![];
 
-        // Convert the left-hand side and right-hand side to assembly.
-        let lhs_insts = lhs_data.to_asm(ctx, program)?;
-        let rhs_insts = rhs_data.to_asm(ctx, program)?;
-        insts.extend(lhs_insts);
-        insts.extend(rhs_insts);
-
         // Pop the temporary value location from the stack.
-        let rhs_loc = ctx.temp_value_location.pop().ok_or(AsmError::NoTempValue)?;
-        let lhs_loc = ctx.temp_value_location.pop().ok_or(AsmError::NoTempValue)?;
+        let rhs_loc = ctx
+            .temp_value_table
+            .get(&rhs)
+            .ok_or(AsmError::NoTempValue)?
+            .clone();
+        let lhs_loc = ctx
+            .temp_value_table
+            .get(&lhs)
+            .ok_or(AsmError::NoTempValue)?
+            .clone();
         let (load_lhs, lhs_reg) = get_value(&lhs_loc, ctx, &[]);
         let (load_rhs, rhs_reg) = get_value(&rhs_loc, ctx, &[lhs_reg]);
         insts.extend(load_lhs);
@@ -504,8 +513,7 @@ impl ToAsm for Binary {
             insts.extend(ctx.reg_allocator.deallocate(rhs_reg, &mut ctx.symbol_table));
         }
         let temp_val = ValueLocation::Register(temp_reg);
-        ctx.temp_value_location.push(temp_val.clone());
-        Ok(insts)
+        Ok((insts, temp_val))
     }
 }
 
@@ -524,7 +532,11 @@ impl ToAsm for Return {
                 })),
                 ValueKind::Binary(_) => {
                     let mut insts: Vec<Box<dyn Inst>> = vec![];
-                    let ret_val = ctx.temp_value_location.pop().ok_or(AsmError::NoTempValue)?;
+                    let ret_val = ctx
+                        .temp_value_table
+                        .get(&val)
+                        .ok_or(AsmError::NoTempValue)?
+                        .clone();
                     let (load, reg) = get_value(&ret_val, ctx, &[]);
                     insts.extend(load);
                     if reg != A0 {

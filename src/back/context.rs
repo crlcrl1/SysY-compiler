@@ -1,6 +1,6 @@
 use crate::back::inst::{Inst, Lw, Sw};
 use crate::back::register::*;
-use koopa::ir::Function;
+use koopa::ir::{Function, Value};
 use std::collections::HashMap;
 
 macro_rules! hashmap {
@@ -30,28 +30,28 @@ pub enum AsmError {
 }
 
 #[derive(Default)]
-pub(crate) struct StackAllocator {
-    pub(crate) stack_size: i32,
+pub struct StackAllocator {
+    pub stack_size: i32,
 }
 
 impl StackAllocator {
-    pub(crate) fn allocate(&mut self, size: i32) -> i32 {
+    pub fn allocate(&mut self, size: i32) -> i32 {
         self.stack_size += size;
         -self.stack_size
     }
 }
 
 #[derive(Default)]
-pub(crate) struct SymbolTable {
+pub struct SymbolTable {
     symbols: HashMap<String, ValueLocation>,
 }
 
 impl SymbolTable {
-    pub(crate) fn insert(&mut self, name: String, location: ValueLocation) {
+    pub fn insert(&mut self, name: String, location: ValueLocation) {
         self.symbols.insert(name, location);
     }
 
-    pub(crate) fn get_symbol_from_loc(&self, location: &ValueLocation) -> Option<&str> {
+    pub fn get_symbol_from_loc(&self, location: &ValueLocation) -> Option<&str> {
         self.symbols.iter().find_map(|(name, loc)| {
             if loc == location {
                 Some(name.as_str())
@@ -61,7 +61,7 @@ impl SymbolTable {
         })
     }
 
-    pub(crate) fn get(&self, name: &str) -> Option<&ValueLocation> {
+    pub fn get(&self, name: &str) -> Option<&ValueLocation> {
         self.symbols.get(name)
     }
 }
@@ -69,7 +69,7 @@ impl SymbolTable {
 /// Register allocator.
 ///
 /// This is used to allocate registers for temp values.
-pub(crate) struct RegisterAllocator {
+pub struct RegisterAllocator {
     /// Register usage.
     ///
     /// The first element is a boolean value indicating whether the register is used.
@@ -93,7 +93,7 @@ const ALL_REGISTERS: [Register; 27] = [
 const ARGUMENT_REGISTERS: [Register; 8] = [A0, A1, A2, A3, A4, A5, A6, A7];
 
 impl RegisterAllocator {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         let hashmap = hashmap! {
             A0 => (false, None),
             A1 => (false, None),
@@ -126,7 +126,7 @@ impl RegisterAllocator {
         Self { used: hashmap }
     }
 
-    pub(crate) fn function_default(&mut self, param_num: usize) {
+    pub fn function_default(&mut self, param_num: usize) {
         let param_regs = if param_num < ARGUMENT_REGISTERS.len() {
             &ARGUMENT_REGISTERS[..param_num]
         } else {
@@ -142,7 +142,7 @@ impl RegisterAllocator {
     }
 
     /// Allocate a random unused register.
-    pub(crate) fn try_allocate(&mut self) -> Option<Register> {
+    pub fn try_allocate(&mut self) -> Option<Register> {
         for (reg, used) in &mut self.used {
             if !used.0 {
                 *used = (true, used.1);
@@ -159,7 +159,7 @@ impl RegisterAllocator {
     /// ## Panics
     ///
     /// If no parameter `used_registers` is all registers, it will panic.
-    pub(crate) fn allocate(
+    pub fn allocate(
         &mut self,
         stack_allocator: &mut StackAllocator,
         used_registers: &[Register],
@@ -185,7 +185,7 @@ impl RegisterAllocator {
     }
 
     /// Deallocate a register.
-    pub(crate) fn deallocate(
+    pub fn deallocate(
         &mut self,
         reg: Register,
         symbol_table: &mut SymbolTable,
@@ -221,7 +221,7 @@ impl RegisterAllocator {
         }
     }
 
-    pub(crate) fn used_registers(&self) -> Vec<(Register, Option<i32>)> {
+    pub fn used_registers(&self) -> Vec<(Register, Option<i32>)> {
         self.used
             .iter()
             .filter(|(_, (used, _))| *used)
@@ -231,7 +231,7 @@ impl RegisterAllocator {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub(crate) enum ValueLocation {
+pub enum ValueLocation {
     /// Temp value is stored in register.
     Register(Register),
     /// Temp value is stored in stack, the i32 is the offset from the stack pointer.
@@ -241,18 +241,18 @@ pub(crate) enum ValueLocation {
 }
 
 #[derive(Default)]
-pub(crate) struct NameGenerator {
+pub struct NameGenerator {
     counter: i32,
 }
 
 impl NameGenerator {
-    pub(crate) fn generate_indent_name(&mut self) -> String {
+    pub fn generate_indent_name(&mut self) -> String {
         let name = format!("#{}", self.counter);
         self.counter += 1;
         name
     }
 
-    pub(crate) fn generate_label_name(&mut self) -> String {
+    pub fn generate_label_name(&mut self) -> String {
         let name = format!(".L{}", self.counter);
         self.counter += 1;
         name
@@ -260,19 +260,19 @@ impl NameGenerator {
 }
 
 #[derive(Default)]
-pub(crate) struct Context {
-    pub(crate) func: Option<Function>,
-    /// Temp value location for a binary operation.
-    pub(crate) temp_value_location: Vec<ValueLocation>,
+pub struct Context {
+    pub func: Option<Function>,
+
+    pub temp_value_table: HashMap<Value, ValueLocation>,
 
     /// Register allocator.
     ///
     /// This is used to allocate registers for temp values.
-    pub(crate) reg_allocator: RegisterAllocator,
+    pub reg_allocator: RegisterAllocator,
 
-    pub(crate) stack_allocator: StackAllocator,
+    pub stack_allocator: StackAllocator,
 
-    pub(crate) symbol_table: SymbolTable,
+    pub symbol_table: SymbolTable,
 
-    pub(crate) name_generator: NameGenerator,
+    pub name_generator: NameGenerator,
 }
