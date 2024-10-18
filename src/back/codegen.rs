@@ -407,7 +407,7 @@ impl ToAsm for Binary {
                         rs1: lhs_reg,
                         rs2: rhs_reg,
                     }),
-                    Box::new(SetNonZero {
+                    Box::new(SetZero {
                         rd: temp_reg,
                         rs: temp_reg,
                     }),
@@ -420,7 +420,7 @@ impl ToAsm for Binary {
                         rs1: lhs_reg,
                         rs2: rhs_reg,
                     }),
-                    Box::new(SetNonZero {
+                    Box::new(SetZero {
                         rd: temp_reg,
                         rs: temp_reg,
                     }),
