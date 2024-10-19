@@ -68,9 +68,9 @@ fn epilogue_insts(ctx: &mut Context) -> Vec<Box<dyn Inst>> {
         }
         if let Some(offset) = offset {
             insts.push(Box::new(Sw {
-                rs: reg,
+                rs1: reg,
                 offset,
-                rd: SP,
+                rs2: SP,
             }));
         }
     }
@@ -220,16 +220,15 @@ impl ToAsm for Jump {
     type Output = Vec<Box<dyn Inst>>;
 
     fn to_asm(&self, ctx: &mut Context, program: &Program) -> Result<Self::Output, AsmError> {
-        Ok(vec![])
-        // let func = ctx.func.ok_or(AsmError::UnknownFunction)?;
-        // let func_data = program.func(func);
-        // let target = func_data.dfg().bb(self.target());
-        // let target_name = target
-        //     .name()
-        //     .clone()
-        //     .map(|name| label_name(&func_data.name(), &name))
-        //     .unwrap_or(ctx.name_generator.generate_label_name());
-        // Ok(vec![Box::new(Jmp { label: target_name })])
+        let func = ctx.func.ok_or(AsmError::UnknownFunction)?;
+        let func_data = program.func(func);
+        let target = func_data.dfg().bb(self.target());
+        let target_name = target
+            .name()
+            .clone()
+            .map(|name| label_name(&func_data.name(), &name))
+            .unwrap_or(ctx.name_generator.generate_label_name());
+        Ok(vec![Box::new(Jmp { label: target_name })])
     }
 }
 
@@ -273,9 +272,9 @@ impl ToAsm for Store {
             ValueLocation::Stack(offset) => {
                 let (mut insts, reg) = ctx.get_value(&store_value, &[]);
                 insts.push(Box::new(Sw {
-                    rs: reg,
+                    rs1: reg,
                     offset,
-                    rd: SP,
+                    rs2: SP,
                 }));
                 if ctx.symbol_table.get_symbol_from_loc(&store_value).is_none() {
                     ctx.deallocate_reg(reg)

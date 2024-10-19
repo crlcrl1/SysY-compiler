@@ -69,11 +69,13 @@ pub struct Lw {
 }
 
 /// Store word
+///
+/// rs1 -> offset(rs2)
 #[derive(Debug, Clone, Inst, Eq, PartialEq)]
 pub struct Sw {
-    pub rd: Register,
+    pub rs1: Register,
     pub offset: i32,
-    pub rs: Register,
+    pub rs2: Register,
 }
 
 eval_inst_with_imm!(Add);

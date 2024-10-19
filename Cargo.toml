@@ -18,7 +18,3 @@ compiler_macro = { path = "./compiler_macro" }
 
 [build-dependencies]
 lalrpop = "0.22.0"
-
-
-[profile.release]
-lto = true

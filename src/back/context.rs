@@ -192,9 +192,9 @@ impl RegisterAllocator {
             }
             self.used.insert(reg, (true, Some(offset)));
             let vec: Vec<Box<dyn Inst>> = vec![Box::new(Sw {
-                rd: reg,
+                rs1: reg,
                 offset,
-                rs: SP,
+                rs2: SP,
             })];
             (reg, vec)
         })
