@@ -1,4 +1,4 @@
-use crate::back::inst::{Inst, Lw, Sw};
+use crate::back::inst::{Inst, LoadImm, Lw, Sw};
 use crate::back::register::*;
 use koopa::ir::{Function, Value};
 use std::collections::HashMap;
@@ -160,7 +160,7 @@ impl RegisterAllocator {
     /// ## Panics
     ///
     /// If no parameter `used_registers` is all registers, it will panic.
-    pub fn allocate(
+    fn allocate(
         &mut self,
         stack_allocator: &mut StackAllocator,
         used_registers: &[Register],
@@ -194,40 +194,6 @@ impl RegisterAllocator {
             })];
             (reg, vec)
         })
-    }
-
-    /// Deallocate a register.
-    pub fn deallocate(
-        &mut self,
-        reg: Register,
-        symbol_table: &mut SymbolTable,
-        temp_value_location: &mut HashMap<Value, ValueLocation>,
-    ) -> Vec<Box<dyn Inst>> {
-        if let Some(offset) = self.used.insert(reg, (false, None)).unwrap().1 {
-            // If a symbol is found, update the symbol table.
-            if let Some(name) = symbol_table.get_symbol_from_loc(&ValueLocation::Stack(offset)) {
-                symbol_table.insert(name.to_string(), ValueLocation::Register(reg));
-                // The register is in use as a symbol, so it is busy.
-                self.used.insert(reg, (true, None));
-            }
-            // If a temp value is found, update the temp value location.
-            for (_, loc) in temp_value_location.iter_mut() {
-                if let ValueLocation::Stack(o) = loc {
-                    if *o == offset {
-                        *loc = ValueLocation::Register(reg);
-                        self.used.insert(reg, (true, None));
-                        break;
-                    }
-                }
-            }
-            vec![Box::new(Lw {
-                rd: reg,
-                offset,
-                rs: SP,
-            })]
-        } else {
-            vec![]
-        }
     }
 
     /// Allocate a register.
@@ -300,4 +266,58 @@ pub struct Context {
     pub symbol_table: SymbolTable,
 
     pub name_generator: NameGenerator,
+}
+
+impl Context {
+    /// # Allocate a register.
+    ///
+    /// If no register is available, it will save a register to the stack and return the saved register.
+    ///
+    /// ## Panics
+    ///
+    /// If no parameter `used_registers` is all registers, it will panic.
+    pub fn allocate_reg(&mut self, used_regs: &[Register]) -> (Register, Vec<Box<dyn Inst>>) {
+        self.reg_allocator.allocate(
+            &mut self.stack_allocator,
+            used_regs,
+            &mut self.symbol_table,
+            &mut self.temp_value_table,
+        )
+    }
+
+    pub fn deallocate_reg(&mut self, reg: Register) {
+        // If a temp value is found, remove it from the temp value table.
+        let temp_value = self
+            .temp_value_table
+            .iter()
+            .find(|(_, loc)| loc == &&ValueLocation::Register(reg));
+        if let Some((value, _)) = temp_value {
+            self.temp_value_table.remove(&(*value).clone());
+        }
+        self.reg_allocator.used.insert(reg, (false, None));
+    }
+
+    pub fn get_value(
+        &mut self,
+        value_location: &ValueLocation,
+        used_regs: &[Register],
+    ) -> (Vec<Box<dyn Inst>>, Register) {
+        match value_location {
+            ValueLocation::Register(reg) => (vec![], *reg),
+            ValueLocation::Stack(offset) => {
+                let (reg, mut insts) = self.allocate_reg(used_regs);
+                insts.push(Box::new(Lw {
+                    rd: reg,
+                    offset: *offset,
+                    rs: SP,
+                }));
+                (insts, reg)
+            }
+            ValueLocation::Immediate(imm) => {
+                let (reg, mut insts) = self.allocate_reg(used_regs);
+                insts.push(Box::new(LoadImm { rd: reg, imm: *imm }));
+                (insts, reg)
+            }
+        }
+    }
 }

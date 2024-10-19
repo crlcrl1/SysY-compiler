@@ -181,12 +181,7 @@ impl ToAsm for Value {
                 };
                 if data_size <= 4 {
                     // Allocate small data in registers.
-                    let (reg, insts) = ctx.reg_allocator.allocate(
-                        &mut ctx.stack_allocator,
-                        &[],
-                        &mut ctx.symbol_table,
-                        &mut ctx.temp_value_table,
-                    );
+                    let (reg, insts) = ctx.allocate_reg(&[]);
                     ctx.symbol_table
                         .insert(data_name.clone(), ValueLocation::Register(reg));
                     Ok(insts)
@@ -266,30 +261,22 @@ impl ToAsm for Store {
             .clone();
         match dest {
             ValueLocation::Register(dest) => {
-                let (mut insts, reg) = get_value(&store_value, ctx, &[dest]);
+                let (mut insts, reg) = ctx.get_value(&store_value, &[dest]);
                 insts.push(Box::new(Move { rd: dest, rs: reg }));
                 if reg != dest && ctx.symbol_table.get_symbol_from_loc(&store_value).is_none() {
-                    insts.extend(ctx.reg_allocator.deallocate(
-                        reg,
-                        &mut ctx.symbol_table,
-                        &mut ctx.temp_value_table,
-                    ));
+                    ctx.deallocate_reg(reg)
                 }
                 Ok(insts)
             }
             ValueLocation::Stack(offset) => {
-                let (mut insts, reg) = get_value(&store_value, ctx, &[]);
+                let (mut insts, reg) = ctx.get_value(&store_value, &[]);
                 insts.push(Box::new(Sw {
                     rs: reg,
                     offset,
                     rd: SP,
                 }));
                 if ctx.symbol_table.get_symbol_from_loc(&store_value).is_none() {
-                    insts.extend(ctx.reg_allocator.deallocate(
-                        reg,
-                        &mut ctx.symbol_table,
-                        &mut ctx.temp_value_table,
-                    ));
+                    ctx.deallocate_reg(reg)
                 }
                 Ok(insts)
             }
@@ -318,42 +305,8 @@ impl ToAsm for Load {
             .get(&name)
             .ok_or(AsmError::NoSymbol)?
             .clone();
-        let (insts, reg) = get_value(&location, ctx, &[]);
+        let (insts, reg) = ctx.get_value(&location, &[]);
         Ok((insts, ValueLocation::Register(reg)))
-    }
-}
-
-fn get_value(
-    temp_value_location: &ValueLocation,
-    ctx: &mut Context,
-    used_regs: &[Register],
-) -> (Vec<Box<dyn Inst>>, Register) {
-    match temp_value_location {
-        ValueLocation::Register(reg) => (vec![], *reg),
-        ValueLocation::Stack(offset) => {
-            let (reg, mut insts) = ctx.reg_allocator.allocate(
-                &mut ctx.stack_allocator,
-                &used_regs,
-                &mut ctx.symbol_table,
-                &mut ctx.temp_value_table,
-            );
-            insts.push(Box::new(Lw {
-                rd: reg,
-                offset: *offset,
-                rs: SP,
-            }));
-            (insts, reg)
-        }
-        ValueLocation::Immediate(imm) => {
-            let (reg, mut insts) = ctx.reg_allocator.allocate(
-                &mut ctx.stack_allocator,
-                &used_regs,
-                &mut ctx.symbol_table,
-                &mut ctx.temp_value_table,
-            );
-            insts.push(Box::new(LoadImm { rd: reg, imm: *imm }));
-            (insts, reg)
-        }
     }
 }
 
@@ -382,20 +335,15 @@ impl ToAsm for Binary {
 
         // Pop the temporary value location from the stack.
         let lhs_loc = get_location(lhs, ctx, program)?;
-        let (load_lhs, lhs_reg) = get_value(&lhs_loc, ctx, &[]);
+        let (load_lhs, lhs_reg) = ctx.get_value(&lhs_loc, &[]);
 
         let rhs_loc = get_location(rhs, ctx, program)?;
-        let (load_rhs, rhs_reg) = get_value(&rhs_loc, ctx, &[lhs_reg]);
+        let (load_rhs, rhs_reg) = ctx.get_value(&rhs_loc, &[lhs_reg]);
         insts.extend(load_lhs);
         insts.extend(load_rhs);
 
         // Allocate a temporary register for the result.
-        let (temp_reg, temp_inst) = ctx.reg_allocator.allocate(
-            &mut ctx.stack_allocator,
-            &[lhs_reg, rhs_reg],
-            &mut ctx.symbol_table,
-            &mut ctx.temp_value_table,
-        );
+        let (temp_reg, temp_inst) = ctx.allocate_reg(&[lhs_reg, rhs_reg]);
         insts.extend(temp_inst);
 
         let rs1 = lhs_reg;
@@ -446,18 +394,10 @@ impl ToAsm for Binary {
         insts.extend(cal_insts);
 
         if lhs_reg != temp_reg && ctx.symbol_table.get_symbol_from_loc(&lhs_loc).is_none() {
-            insts.extend(ctx.reg_allocator.deallocate(
-                lhs_reg,
-                &mut ctx.symbol_table,
-                &mut ctx.temp_value_table,
-            ));
+            ctx.deallocate_reg(lhs_reg)
         }
         if rhs_reg != temp_reg && ctx.symbol_table.get_symbol_from_loc(&rhs_loc).is_none() {
-            insts.extend(ctx.reg_allocator.deallocate(
-                rhs_reg,
-                &mut ctx.symbol_table,
-                &mut ctx.temp_value_table,
-            ));
+            ctx.deallocate_reg(rhs_reg)
         }
         let temp_val = ValueLocation::Register(rd);
         Ok((insts, temp_val))
@@ -484,17 +424,13 @@ impl ToAsm for Return {
                         .get(&val)
                         .ok_or(AsmError::NoTempValue)?
                         .clone();
-                    let (load, reg) = get_value(&ret_val, ctx, &[]);
+                    let (load, reg) = ctx.get_value(&ret_val, &[]);
                     insts.extend(load);
                     if reg != A0 {
                         // We need to move the value to register a0.
                         insts.push(Box::new(Move { rd: A0, rs: reg }));
                         if ctx.symbol_table.get_symbol_from_loc(&ret_val).is_none() {
-                            insts.extend(ctx.reg_allocator.deallocate(
-                                reg,
-                                &mut ctx.symbol_table,
-                                &mut ctx.temp_value_table,
-                            ));
+                            ctx.deallocate_reg(reg)
                         }
                     }
                     insts.push(Box::new(Ret));
