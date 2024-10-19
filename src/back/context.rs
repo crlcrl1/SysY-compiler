@@ -36,8 +36,15 @@ pub struct StackAllocator {
 
 impl StackAllocator {
     pub fn allocate(&mut self, size: i32) -> i32 {
+        assert!(size > 0);
         self.stack_size += size;
         self.stack_size - size
+    }
+
+    pub fn align(&mut self) {
+        let old_stack_size = self.stack_size;
+        self.stack_size = (self.stack_size + 15) & !15;
+        assert!(self.stack_size >= old_stack_size);
     }
 }
 

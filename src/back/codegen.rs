@@ -60,7 +60,7 @@ fn prologue_insts(ctx: &Context) -> Vec<Box<dyn Inst>> {
     }
 }
 
-fn epilogue_insts(ctx: &Context) -> Vec<Box<dyn Inst>> {
+fn epilogue_insts(ctx: &mut Context) -> Vec<Box<dyn Inst>> {
     let mut insts: Vec<Box<dyn Inst>> = vec![];
     for (reg, offset) in ctx.reg_allocator.used_registers() {
         if !CALLEE_SAVED_REGISTERS.contains(&reg) {
@@ -75,7 +75,8 @@ fn epilogue_insts(ctx: &Context) -> Vec<Box<dyn Inst>> {
         }
     }
 
-    let stack_size = (ctx.stack_allocator.stack_size + 15) / 16 * 16;
+    ctx.stack_allocator.align();
+    let stack_size = ctx.stack_allocator.stack_size;
     if stack_size == 0 {
         return insts;
     }
