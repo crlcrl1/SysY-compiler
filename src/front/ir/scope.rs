@@ -1,4 +1,4 @@
-use crate::front::ident::{Identifier, IdentifierType};
+use crate::front::ident::Identifier;
 use std::collections::HashMap;
 
 pub type Result = std::result::Result<(), String>;

@@ -1,6 +1,5 @@
 use crate::front::ast::*;
 use crate::front::parser_context::ParserContext;
-use crate::front::ident::Identifier;
 use crate::util::logger::show_error_range;
 use std::str::FromStr;
 use std::process::exit;
@@ -273,44 +272,37 @@ ExprArray: ExprArray = {
     <v: Expr> => ExprArray::Val(v),
 };
 
-Stmt: Stmt = {
-    #[precedence(level="0")]
-    <b: Block> => Stmt::Block(b),
-    #[precedence(level="0")]
+IfMatchStmt: Stmt = {
     ";" => Stmt::Empty,
-    #[precedence(level="0")]
-    <s: LVal> "=" <e: Expr> ";" => Stmt::Assign(Assign {
-        target: s,value: e
-    }),
 
-    #[precedence(level="0")]
     <e: Expr> ";" => Stmt::Expr(e),
 
-    #[precedence(level="0")]
-    "if" "(" <c: LOrExpr> ")" <t: Stmt> "else" <e: Stmt> => Stmt::If(If {
-        cond: c,
-        then_stmt: Rc::new(t),
-        else_stmt: Some(Rc::new(e)),
-    }),
+    <lval: LVal> "=" <exp: Expr> ";" => Stmt::Assign(Assign { target: lval , value: exp }),
 
-    #[precedence(level="1")]
-    "if" "(" <c: LOrExpr> ")" <t: Stmt> => Stmt::If(If {
-        cond: c,
-        then_stmt: Rc::new(t),
-        else_stmt: None,
-    }),
+    <b: Block> => Stmt::Block(b),
 
-    #[precedence(level="0")]
-    "while" "(" <c: LOrExpr> ")" <t: Stmt> => Stmt::While(While {
-        cond: c,
-        body: Rc::new(t),
-    }),
-    #[precedence(level="0")]
+    "while" "(" <cond: LOrExpr> ")" <stmt: IfMatchStmt> => Stmt::While(While { cond, body: Rc::new(stmt) }),
+
     "break" ";" => Stmt::Break,
-    #[precedence(level="0")]
+
     "continue" ";" => Stmt::Continue,
-    #[precedence(level="0")]
-    "return" <e: Expr?> ";" => Stmt::Return(e),
+
+    "return" <expr: Expr?> ";" => Stmt::Return(expr),
+
+    "if" "(" <cond: LOrExpr> ")" <stmt: IfMatchStmt> "else" <else_stmt:  IfMatchStmt> =>
+         Stmt::If(If { cond, else_stmt: Some(Rc::new(else_stmt)), then_stmt: Rc::new(stmt) }),
+}
+
+IfOpenStmt: Stmt = {
+    "while" "(" <cond: LOrExpr> ")" <stmt: IfOpenStmt> => Stmt::While(While { cond, body: Rc::new(stmt) }),
+    "if" "(" <cond: LOrExpr> ")" <stmt: Stmt> => Stmt::If(If { cond, then_stmt: Rc::new(stmt), else_stmt: None }),
+    "if" "(" <cond: LOrExpr> ")" <stmt: IfMatchStmt> "else" <else_stmt: IfOpenStmt> =>
+           Stmt::If(If { cond, then_stmt: Rc::new(stmt), else_stmt: Some(Rc::new(else_stmt)) }),
+}
+
+Stmt: Stmt = {
+    <s: IfMatchStmt> => s,
+    <s: IfOpenStmt> => s,
 };
 
 LVal: LVal = {

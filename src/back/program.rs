@@ -75,6 +75,7 @@ impl Assembly for AsmFunc {
         s.push_str(&format!("{}:\n", self.name));
         for block in &self.body {
             s.push_str(&block.dump());
+            s.push_str("\n");
         }
         s
     }

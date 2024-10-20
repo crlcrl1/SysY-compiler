@@ -12,12 +12,16 @@ use koopa::ir::builder::{BasicBlockBuilder, LocalInstBuilder, ValueBuilder};
 use koopa::ir::{BasicBlock, BinaryOp, Function, FunctionData, Program, Type, Value, ValueKind};
 use std::rc::Rc;
 
+type Return = Option<Expr>;
+
+/// Context of the IR generation
 pub struct Context {
     program: Program,
     func: Option<Function>,
     scope: Scope,
     current_bb: Option<BasicBlock>,
     max_basic_block_id: usize,
+    max_temp_value_id: usize,
 }
 
 impl Context {
@@ -28,10 +32,11 @@ impl Context {
             scope,
             current_bb: None,
             max_basic_block_id: 0,
+            max_temp_value_id: 0,
         }
     }
 
-    pub fn new_bb(&mut self) -> Result<BasicBlock, ParseError> {
+    fn new_bb(&mut self) -> Result<BasicBlock, ParseError> {
         self.max_basic_block_id += 1;
         self.func.ok_or(ParseError::FunctionNotFound).map(|func| {
             let func_data = self.program.func_mut(func);
@@ -39,11 +44,11 @@ impl Context {
         })
     }
 
-    pub fn get_func(&self) -> Result<Function, ParseError> {
+    fn get_func(&self) -> Result<Function, ParseError> {
         self.func.ok_or(ParseError::FunctionNotFound)
     }
 
-    pub fn get_bb(&self) -> Result<BasicBlock, ParseError> {
+    fn get_bb(&self) -> Result<BasicBlock, ParseError> {
         self.current_bb.ok_or(ParseError::BasicBlockNotFound)
     }
 
@@ -51,7 +56,18 @@ impl Context {
         self.program
     }
 
-    pub fn delete_unused_bb(&mut self) {
+    fn func_data(&self) -> Result<&FunctionData, ParseError> {
+        let func = self.get_func()?;
+        Ok(self.program.func(func))
+    }
+
+    fn func_data_mut(&mut self) -> Result<&mut FunctionData, ParseError> {
+        let func = self.get_func()?;
+        Ok(self.program.func_mut(func))
+    }
+
+    /// Delete unused basic block and link the basic block
+    pub fn delete_and_link(&mut self) {
         for (_, func_data) in self.program.funcs_mut() {
             // get all jump and branch target
             let mut target = vec![];
@@ -120,6 +136,41 @@ impl Context {
             });
         }
     }
+
+    /// Whether the block is end with a jump, branch or return instruction
+    fn block_ended(&mut self, bb: BasicBlock) -> Result<bool, ParseError> {
+        let inst = self
+            .func_data_mut()?
+            .layout_mut()
+            .bb_mut(bb)
+            .insts()
+            .back_key()
+            .copied();
+        if let Some(inst) = inst {
+            let inst = self.func_data()?.dfg().value(inst);
+            match inst.kind() {
+                ValueKind::Branch(_) | ValueKind::Jump(_) | ValueKind::Return(_) => Ok(true),
+                _ => Ok(false),
+            }
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// If a block is not ended, end the block with a jump instruction
+    fn end_block(&mut self, bb: BasicBlock, target: BasicBlock) -> Result<(), ParseError> {
+        if !self.block_ended(bb)? {
+            let func_data = self.func_data_mut()?;
+            let jump = new_value!(func_data).jump(target);
+            add_inst!(func_data, bb, jump);
+        }
+        Ok(())
+    }
+
+    fn temp_value_name(&mut self) -> String {
+        self.max_temp_value_id += 1;
+        format!("@__t{}", self.max_temp_value_id)
+    }
 }
 
 #[derive(Debug)]
@@ -144,8 +195,8 @@ impl GenerateIR for ConstExpr {
             .0
             .eval(&mut ctx.scope)
             .map_err(|_| ParseError::InvalidExpr)?;
-        if let Ok(func) = ctx.get_func() {
-            let func_data = ctx.program.func_mut(func);
+        if let Ok(_) = ctx.get_func() {
+            let func_data = ctx.func_data_mut()?;
             Ok(new_value!(func_data).integer(val))
         } else {
             Ok(ctx.program.new_value().integer(val))
@@ -167,11 +218,11 @@ impl GenerateIR for VarDef {
     fn generate_ir(&self, ctx: &mut Context) -> Result<Value, ParseError> {
         match self {
             VarDef::NormalVarDef(normal_var_def) => {
-                if let Ok(func) = ctx.get_func() {
+                if let Ok(_) = ctx.get_func() {
                     let scope_id = ctx.scope.current_scope_id();
                     let var_name = format!("@_{}_{}", scope_id, normal_var_def.name);
                     let bb = ctx.get_bb()?;
-                    let func_data = ctx.program.func_mut(func);
+                    let func_data = ctx.func_data_mut()?;
                     // allocate variable
                     let var_alloc = new_value!(func_data).alloc(Type::get_i32());
 
@@ -183,9 +234,9 @@ impl GenerateIR for VarDef {
                     if let Some(init) = &normal_var_def.value {
                         // store initial value
                         let init = init.generate_ir(ctx)?;
-                        let func_data = ctx.program.func_mut(func);
-                        let store = new_value!(func_data).store(init, var_alloc);
-                        add_inst!(func_data, bb, store);
+                        let store = new_value!(ctx.func_data_mut()?).store(init, var_alloc);
+                        let current_bb = ctx.get_bb()?;
+                        add_inst!(ctx.func_data_mut()?, current_bb, store);
                     }
                     ctx.scope
                         .add_identifier(
@@ -217,12 +268,12 @@ impl GenerateIR for ConstDef {
     fn generate_ir(&self, ctx: &mut Context) -> Result<(), ParseError> {
         match self {
             ConstDef::NormalConstDef(normal) => {
-                if let Ok(func) = ctx.get_func() {
+                if let Ok(_) = ctx.get_func() {
                     let val = normal
                         .value
                         .eval(&mut ctx.scope)
                         .map_err(|_| ParseError::ConstExprError)?;
-                    let func_data = ctx.program.func_mut(func);
+                    let func_data = ctx.func_data_mut()?;
                     let val = new_value!(func_data).integer(val);
                     ctx.scope
                         .add_identifier(
@@ -257,12 +308,10 @@ impl GenerateIR for LVal {
 
                 let val = match ident {
                     Identifier::Variable(ref var) => {
-                        let func = ctx.get_func()?;
                         let bb = ctx.get_bb()?;
-                        let func_data = ctx.program.func_mut(func);
                         let var_def = var.koopa_def.ok_or(ParseError::UnknownIdentifier)?;
-                        let load = new_value!(func_data).load(var_def);
-                        add_inst!(func_data, bb, load);
+                        let load = new_value!(ctx.func_data_mut()?).load(var_def);
+                        add_inst!(ctx.func_data_mut()?, bb, load);
                         load
                     }
                     Identifier::Constant(ref constant) => constant.koopa_def,
@@ -289,8 +338,7 @@ impl GenerateIR for PrimaryExpr {
             PrimaryExpr::Expr(expr) => expr.generate_ir(ctx),
             PrimaryExpr::LVal(lval) => lval.generate_ir(ctx),
             PrimaryExpr::Number(n) => {
-                let func = ctx.get_func()?;
-                let func_data = ctx.program.func_mut(func);
+                let func_data = ctx.func_data_mut()?;
                 Ok(new_value!(func_data).integer(*n))
             }
         }
@@ -308,9 +356,8 @@ impl GenerateIR for UnaryExpr {
             }
             UnaryExpr::Unary(op, expr) => {
                 let expr = expr.generate_ir(ctx)?;
-                let func = ctx.get_func()?;
                 let current_bb = ctx.get_bb()?;
-                let func_data = ctx.program.func_mut(func);
+                let func_data = ctx.func_data_mut()?;
                 let zero = new_value!(func_data).integer(0);
                 match op {
                     UnaryOp::Pos => Ok(expr),
@@ -340,9 +387,8 @@ impl GenerateIR for MulExpr {
             MulExpr::Mul(lhs, op, rhs) => {
                 let lhs = lhs.generate_ir(ctx)?;
                 let rhs = rhs.generate_ir(ctx)?;
-                let func = ctx.get_func()?;
                 let current_bb = ctx.get_bb()?;
-                let func_data = ctx.program.func_mut(func);
+                let func_data = ctx.func_data_mut()?;
                 let value = new_value!(func_data).binary((*op).into(), lhs, rhs);
                 add_inst!(func_data, current_bb, value);
                 Ok(value)
@@ -360,9 +406,8 @@ impl GenerateIR for AddExpr {
             AddExpr::Add(lhs, op, rhs) => {
                 let lhs = lhs.generate_ir(ctx)?;
                 let rhs = rhs.generate_ir(ctx)?;
-                let func = ctx.get_func()?;
                 let current_bb = ctx.get_bb()?;
-                let func_data = ctx.program.func_mut(func);
+                let func_data = ctx.func_data_mut()?;
                 let value = new_value!(func_data).binary((*op).into(), lhs, rhs);
                 add_inst!(func_data, current_bb, value);
                 Ok(value)
@@ -380,9 +425,8 @@ impl GenerateIR for RelExpr {
             RelExpr::Rel(lhs, op, rhs) => {
                 let lhs = lhs.generate_ir(ctx)?;
                 let rhs = rhs.generate_ir(ctx)?;
-                let func = ctx.get_func()?;
                 let current_bb = ctx.get_bb()?;
-                let func_data = ctx.program.func_mut(func);
+                let func_data = ctx.func_data_mut()?;
                 let value = new_value!(func_data).binary((*op).into(), lhs, rhs);
                 add_inst!(func_data, current_bb, value);
                 Ok(value)
@@ -400,9 +444,8 @@ impl GenerateIR for EqExpr {
             EqExpr::Eq(lhs, op, rhs) => {
                 let lhs = lhs.generate_ir(ctx)?;
                 let rhs = rhs.generate_ir(ctx)?;
-                let func = ctx.get_func()?;
                 let current_bb = ctx.get_bb()?;
-                let func_data = ctx.program.func_mut(func);
+                let func_data = ctx.func_data_mut()?;
                 let value = new_value!(func_data).binary((*op).into(), lhs, rhs);
                 add_inst!(func_data, current_bb, value);
                 Ok(value)
@@ -419,18 +462,49 @@ impl GenerateIR for LAndExpr {
             LAndExpr::EqExpr(eq_expr) => eq_expr.generate_ir(ctx),
             LAndExpr::And(lhs, rhs) => {
                 let lhs = lhs.generate_ir(ctx)?;
-                let rhs = rhs.generate_ir(ctx)?;
-                let func = ctx.get_func()?;
+
+                // alloc a new space to store the result
+                let result = new_value!(ctx.func_data_mut()?).alloc(Type::get_i32());
+                let result_name = ctx.temp_value_name();
+                ctx.func_data_mut()?
+                    .dfg_mut()
+                    .set_value_name(result, Some(result_name));
                 let current_bb = ctx.get_bb()?;
-                let func_data = ctx.program.func_mut(func);
-                let zero = new_value!(func_data).integer(0);
-                let lhs = new_value!(func_data).binary(BinaryOp::NotEq, lhs, zero);
-                add_inst!(func_data, current_bb, lhs);
-                let rhs = new_value!(func_data).binary(BinaryOp::NotEq, rhs, zero);
-                add_inst!(func_data, current_bb, rhs);
-                let value = new_value!(func_data).binary(BinaryOp::And, lhs, rhs);
-                add_inst!(func_data, current_bb, value);
-                Ok(value)
+                add_inst!(ctx.func_data_mut()?, current_bb, result);
+                let zero = new_value!(ctx.func_data_mut()?).integer(0);
+                let lhs = new_value!(ctx.func_data_mut()?).binary(BinaryOp::NotEq, lhs, zero);
+                add_inst!(ctx.func_data_mut()?, current_bb, lhs);
+                let store = new_value!(ctx.func_data_mut()?).store(lhs, result);
+                add_inst!(ctx.func_data_mut()?, current_bb, store);
+
+                let end_bb = ctx.new_bb()?;
+                let true_bb = ctx.new_bb()?;
+
+                // If lhs is false, jump to end_bb
+                // Otherwise, evaluate rhs
+                let load = new_value!(ctx.func_data_mut()?).load(result);
+                add_inst!(ctx.func_data_mut()?, current_bb, load);
+                let branch = new_value!(ctx.func_data_mut()?).branch(load, true_bb, end_bb);
+                add_inst!(ctx.func_data_mut()?, current_bb, branch);
+
+                add_bb!(ctx.func_data_mut()?, true_bb);
+                ctx.current_bb = Some(true_bb);
+                let rhs = rhs.generate_ir(ctx)?;
+                let current_bb = ctx.get_bb()?;
+                let zero = new_value!(ctx.func_data_mut()?).integer(0);
+                let rhs = new_value!(ctx.func_data_mut()?).binary(BinaryOp::NotEq, rhs, zero);
+                add_inst!(ctx.func_data_mut()?, current_bb, rhs);
+                let store = new_value!(ctx.func_data_mut()?).store(rhs, result);
+                add_inst!(ctx.func_data_mut()?, current_bb, store);
+                // Jump to end_bb
+                let jump = new_value!(ctx.func_data_mut()?).jump(end_bb);
+                add_inst!(ctx.func_data_mut()?, current_bb, jump);
+
+                add_bb!(ctx.func_data_mut()?, end_bb);
+                ctx.current_bb = Some(end_bb);
+                let load_res = new_value!(ctx.func_data_mut()?).load(result);
+                add_inst!(ctx.func_data_mut()?, end_bb, load_res);
+                Ok(load_res)
             }
         }
     }
@@ -443,18 +517,49 @@ impl GenerateIR for LOrExpr {
         match self {
             LOrExpr::LAndExpr(and_expr) => and_expr.generate_ir(ctx),
             LOrExpr::Or(lhs, rhs) => {
-                // TODO: Optimize for constant value
                 let lhs = lhs.generate_ir(ctx)?;
-                let rhs = rhs.generate_ir(ctx)?;
-                let func = ctx.get_func()?;
+                // alloc a new space to store the result
+                let result = new_value!(ctx.func_data_mut()?).alloc(Type::get_i32());
+                let result_name = ctx.temp_value_name();
+                ctx.func_data_mut()?
+                    .dfg_mut()
+                    .set_value_name(result, Some(result_name));
                 let current_bb = ctx.get_bb()?;
-                let func_data = ctx.program.func_mut(func);
-                let value = new_value!(func_data).binary(BinaryOp::Or, lhs, rhs);
-                let zero = new_value!(func_data).integer(0);
-                add_inst!(func_data, current_bb, value);
-                let value = new_value!(func_data).binary(BinaryOp::NotEq, value, zero);
-                add_inst!(func_data, current_bb, value);
-                Ok(value)
+                add_inst!(ctx.func_data_mut()?, current_bb, result);
+                let zero = new_value!(ctx.func_data_mut()?).integer(0);
+                let lhs = new_value!(ctx.func_data_mut()?).binary(BinaryOp::NotEq, lhs, zero);
+                add_inst!(ctx.func_data_mut()?, current_bb, lhs);
+                let store = new_value!(ctx.func_data_mut()?).store(lhs, result);
+                add_inst!(ctx.func_data_mut()?, current_bb, store);
+
+                let end_bb = ctx.new_bb()?;
+                let false_bb = ctx.new_bb()?;
+
+                // If lhs is true, jump to end_bb
+                // Otherwise, evaluate rhs
+                let load = new_value!(ctx.func_data_mut()?).load(result);
+                add_inst!(ctx.func_data_mut()?, current_bb, load);
+                let branch = new_value!(ctx.func_data_mut()?).branch(load, end_bb, false_bb);
+                add_inst!(ctx.func_data_mut()?, current_bb, branch);
+
+                add_bb!(ctx.func_data_mut()?, false_bb);
+                ctx.current_bb = Some(false_bb);
+                let rhs = rhs.generate_ir(ctx)?;
+                let current_bb = ctx.get_bb()?;
+                let zero = new_value!(ctx.func_data_mut()?).integer(0);
+                let rhs = new_value!(ctx.func_data_mut()?).binary(BinaryOp::NotEq, rhs, zero);
+                add_inst!(ctx.func_data_mut()?, current_bb, rhs);
+                let store = new_value!(ctx.func_data_mut()?).store(rhs, result);
+                add_inst!(ctx.func_data_mut()?, current_bb, store);
+                // Jump to end_bb
+                let jump = new_value!(ctx.func_data_mut()?).jump(end_bb);
+                add_inst!(ctx.func_data_mut()?, current_bb, jump);
+
+                add_bb!(ctx.func_data_mut()?, end_bb);
+                ctx.current_bb = Some(end_bb);
+                let load_res = new_value!(ctx.func_data_mut()?).load(result);
+                add_inst!(ctx.func_data_mut()?, end_bb, load_res);
+                Ok(load_res)
             }
         }
     }
@@ -486,53 +591,46 @@ impl GenerateIR for FuncDef {
     }
 }
 
+impl GenerateIR for Stmt {
+    type Output = ();
+
+    fn generate_ir(&self, ctx: &mut Context) -> Result<Self::Output, ParseError> {
+        match self {
+            Stmt::Assign(assign) => assign.generate_ir(ctx),
+            Stmt::Expr(expr) => expr.generate_ir(ctx).map(|_| ()),
+            Stmt::Block(block) => {
+                ctx.scope.go_into_scoop(block.id);
+                block.generate_ir(ctx)?;
+                ctx.scope.go_out_scoop();
+                Ok(())
+            }
+            Stmt::If(if_stmt) => if_stmt.generate_ir(ctx),
+            Stmt::While(_) => Ok(()),
+            Stmt::Return(ret) => ret.generate_ir(ctx),
+            Stmt::Break => Ok(()),
+            Stmt::Continue => Ok(()),
+            Stmt::Empty => Ok(()),
+        }
+    }
+}
+
 impl GenerateIR for Block {
     type Output = ();
 
     fn generate_ir(&self, ctx: &mut Context) -> Result<(), ParseError> {
         let bb = ctx.new_bb()?;
-        let func = ctx.get_func()?;
-        let func_data = ctx.program.func_mut(func);
+        let func_data = ctx.func_data_mut()?;
         add_bb!(func_data, bb);
         ctx.current_bb = Some(bb);
         for block_item in &self.items {
             match block_item {
                 BlockItem::Stmt(stmt) => match stmt {
-                    Stmt::Assign(assign) => assign.generate_ir(ctx)?,
-                    Stmt::Expr(expr) => expr.generate_ir(ctx).map(|_| ())?,
-                    Stmt::Block(block) => {
-                        ctx.scope.go_into_scoop(block.id);
-                        block.generate_ir(ctx)?;
-                        ctx.scope.go_out_scoop();
-                    }
-                    Stmt::If(_) => {}
-                    Stmt::While(_) => {}
-                    Stmt::Return(ret) => {
-                        let bb = ctx.get_bb()?;
-                        let func = ctx.get_func()?;
-                        let func_data = ctx.program.func_mut(func);
-                        if let Some(expr) = ret {
-                            if let Ok(ret_val) = expr.eval(&mut ctx.scope) {
-                                let ret_val = new_value!(func_data).integer(ret_val);
-                                let ret = new_value!(func_data).ret(Some(ret_val));
-                                add_inst!(func_data, bb, ret);
-                            } else {
-                                let val = expr.generate_ir(ctx)?;
-                                let func = ctx.get_func()?;
-                                let func_data = ctx.program.func_mut(func);
-                                let ret = new_value!(func_data).ret(Some(val));
-                                add_inst!(func_data, bb, ret);
-                            }
-                        } else {
-                            let ret = func_data.dfg_mut().new_value().ret(None);
-                            add_inst!(func_data, bb, ret);
-                        }
+                    Stmt::Return(_) => {
+                        stmt.generate_ir(ctx)?;
                         // Once return is called, we don't need to generate any more IR
                         break;
                     }
-                    Stmt::Break => {}
-                    Stmt::Continue => {}
-                    Stmt::Empty => {}
+                    _ => stmt.generate_ir(ctx)?,
                 },
                 BlockItem::Decl(decl) => match decl {
                     Decl::ConstDecl(const_decl) => {
@@ -549,10 +647,73 @@ impl GenerateIR for Block {
             }
         }
         let bb = ctx.new_bb()?;
-        let func = ctx.get_func()?;
-        let func_data = ctx.program.func_mut(func);
+        let func_data = ctx.func_data_mut()?;
         add_bb!(func_data, bb);
         ctx.current_bb = Some(bb);
+        Ok(())
+    }
+}
+
+impl GenerateIR for If {
+    type Output = ();
+
+    fn generate_ir(&self, ctx: &mut Context) -> Result<Self::Output, ParseError> {
+        // TODO: Modify cond
+        let cond = self.cond.generate_ir(ctx)?;
+        let current_bb = ctx.get_bb()?;
+        let then_bb = ctx.new_bb()?;
+        add_bb!(ctx.func_data_mut()?, then_bb);
+
+        // environment for then block
+        ctx.current_bb = Some(then_bb);
+        self.then_stmt.generate_ir(ctx)?;
+        let then_bb_end = ctx.get_bb()?;
+        let end_bb = ctx.new_bb()?;
+
+        let branch = if let Some(else_stmt) = &self.else_stmt {
+            let else_bb = ctx.new_bb()?;
+            add_bb!(ctx.func_data_mut()?, else_bb);
+
+            // environment for else block
+            ctx.current_bb = Some(else_bb);
+            else_stmt.generate_ir(ctx)?;
+            let else_bb_end = ctx.get_bb()?;
+            add_bb!(ctx.func_data_mut()?, end_bb);
+            ctx.end_block(then_bb_end, end_bb)?;
+            ctx.end_block(else_bb_end, end_bb)?;
+            new_value!(ctx.func_data_mut()?).branch(cond, then_bb, else_bb)
+        } else {
+            add_bb!(ctx.func_data_mut()?, end_bb);
+            ctx.end_block(then_bb_end, end_bb)?;
+            new_value!(ctx.func_data_mut()?).branch(cond, then_bb, end_bb)
+        };
+        add_inst!(ctx.func_data_mut()?, current_bb, branch);
+        ctx.current_bb = Some(end_bb);
+        Ok(())
+    }
+}
+
+impl GenerateIR for Return {
+    type Output = ();
+
+    fn generate_ir(&self, ctx: &mut Context) -> Result<(), ParseError> {
+        if let Some(expr) = self {
+            if let Ok(ret_val) = expr.eval(&mut ctx.scope) {
+                let ret_val = new_value!(ctx.func_data_mut()?).integer(ret_val);
+                let ret = new_value!(ctx.func_data_mut()?).ret(Some(ret_val));
+                let bb = ctx.get_bb()?;
+                add_inst!(ctx.func_data_mut()?, bb, ret);
+            } else {
+                let val = expr.generate_ir(ctx)?;
+                let ret = new_value!(ctx.func_data_mut()?).ret(Some(val));
+                let bb = ctx.get_bb()?;
+                add_inst!(ctx.func_data_mut()?, bb, ret);
+            }
+        } else {
+            let ret = ctx.func_data_mut()?.dfg_mut().new_value().ret(None);
+            let bb = ctx.get_bb()?;
+            add_inst!(ctx.func_data_mut()?, bb, ret);
+        }
         Ok(())
     }
 }
@@ -570,9 +731,9 @@ impl GenerateIR for Assign {
                     .map(|x| x.koopa_def())
                     .ok_or(ParseError::UnknownIdentifier)?
                     .ok_or(ParseError::UnknownIdentifier)?;
-                let store = new_value!(ctx.program.func_mut(ctx.get_func()?)).store(val, var_decl);
+                let store = new_value!(ctx.func_data_mut()?).store(val, var_decl);
                 let bb = ctx.get_bb()?;
-                add_inst!(ctx.program.func_mut(ctx.get_func()?), bb, store);
+                add_inst!(ctx.func_data_mut()?, bb, store);
                 Ok(())
             }
             LVal::ArrayElem(_) => {

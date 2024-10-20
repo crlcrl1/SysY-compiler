@@ -3,7 +3,7 @@ use crate::back::inst::*;
 use crate::back::program::{AsmBlock, AsmFunc, AsmProgram, Assembly};
 use crate::back::register::*;
 use crate::util::logger::show_error;
-use koopa::ir::values::{Binary, Jump, Load, Return, Store};
+use koopa::ir::values::{Binary, Branch, Jump, Load, Return, Store};
 use koopa::ir::{BinaryOp, Function, Program, TypeKind, Value, ValueKind};
 
 pub fn generate_asm(program: Program) -> String {
@@ -19,10 +19,6 @@ pub fn generate_asm(program: Program) -> String {
         ctx.func = None;
     }
     asm.dump()
-}
-
-fn label_name(func_name: &str, label: &str) -> String {
-    format!(".{}_{}", &func_name[1..], &label[1..])
 }
 
 fn variable_name(func_name: &str, var_name: &str) -> String {
@@ -112,12 +108,9 @@ impl ToAsm for Function {
         let func_name = func_data.name();
         let mut func = AsmFunc::new(func_name[1..].to_string());
         for (block, node) in func_data.layout().bbs() {
-            let label_name = func_data
-                .dfg()
-                .bb(*block)
-                .name()
-                .clone()
-                .map(|name| label_name(func_name, &name))
+            ctx.current_bb = Some(*block);
+            let label_name = ctx
+                .get_label_name(*block, program)
                 .unwrap_or(ctx.name_generator.generate_label_name());
             let asm_block = AsmBlock::new(label_name);
             let asm_block = func.add_block(asm_block);
@@ -126,12 +119,15 @@ impl ToAsm for Function {
                 asm_block.add_insts(insts);
             }
         }
+        ctx.current_bb = None;
 
         // Allocate stack space for the function and deallocate it when the function is done.
         let mut first_block = AsmBlock::new(".prologue".to_string());
         let prologue_insts = prologue_insts(ctx);
-        first_block.add_insts(prologue_insts);
-        func.add_first_block(first_block);
+        if !prologue_insts.is_empty() {
+            first_block.add_insts(prologue_insts);
+            func.add_first_block(first_block);
+        }
 
         for block in func.blocks_mut() {
             if let Some(ret_pos) = block.contains(&Ret) {
@@ -151,15 +147,7 @@ impl ToAsm for Value {
         let value_data = program.func(func).dfg().value(*self);
 
         match value_data.kind() {
-            ValueKind::Integer(n) => {
-                let value = n.value();
-                let location = match value {
-                    0 => ValueLocation::Register(ZERO),
-                    _ => ValueLocation::Immediate(value),
-                };
-                ctx.temp_value_table.insert(*self, location);
-                Ok(vec![])
-            }
+            ValueKind::Integer(_) => Ok(vec![]),
             ValueKind::ZeroInit(_) => unimplemented!(),
             ValueKind::Undef(_) => unimplemented!(),
             ValueKind::Aggregate(_) => unimplemented!(),
@@ -180,19 +168,25 @@ impl ToAsm for Value {
                     TypeKind::Pointer(p) => p.size(),
                     TypeKind::Function(_, _) => 0,
                 };
-                if data_size <= 4 {
-                    // Allocate small data in registers.
-                    let (reg, insts) = ctx.allocate_reg(&[]);
-                    ctx.symbol_table
-                        .insert(data_name.clone(), ValueLocation::Register(reg));
-                    Ok(insts)
-                } else {
-                    // Allocate large data in stack.
-                    let offset = ctx.stack_allocator.allocate(data_type.size() as i32);
-                    ctx.symbol_table
-                        .insert(data_name.clone(), ValueLocation::Stack(offset));
-                    Ok(vec![])
-                }
+
+                let offset = ctx.stack_allocator.allocate(data_size as i32);
+                ctx.symbol_table
+                    .insert(data_name.clone(), ValueLocation::Stack(offset));
+                Ok(vec![])
+                // TODO: Register allocation.
+                // if data_size <= 4 {
+                //     // Allocate small data in registers.
+                //     let (reg, insts) = ctx.allocate_reg(&[]);
+                //     ctx.symbol_table
+                //         .insert(data_name.clone(), ValueLocation::Register(reg));
+                //     Ok(insts)
+                // } else {
+                //     // Allocate large data in stack.
+                //     let offset = ctx.stack_allocator.allocate(data_type.size() as i32);
+                //     ctx.symbol_table
+                //         .insert(data_name.clone(), ValueLocation::Stack(offset));
+                //     Ok(vec![])
+                // }
             }
             ValueKind::GlobalAlloc(_) => unimplemented!(),
             ValueKind::Load(load) => {
@@ -208,7 +202,7 @@ impl ToAsm for Value {
                 ctx.temp_value_table.insert(*self, temp_value);
                 Ok(insts)
             }
-            ValueKind::Branch(_) => unimplemented!(),
+            ValueKind::Branch(branch) => branch.to_asm(ctx, program),
             ValueKind::Jump(jump) => jump.to_asm(ctx, program),
             ValueKind::Call(_) => unimplemented!(),
             ValueKind::Return(ret) => ret.to_asm(ctx, program),
@@ -216,19 +210,53 @@ impl ToAsm for Value {
     }
 }
 
+impl ToAsm for Branch {
+    type Output = Vec<Box<dyn Inst>>;
+
+    fn to_asm(&self, ctx: &mut Context, program: &Program) -> Result<Self::Output, AsmError> {
+        let cond_loc = ctx.get_location(self.cond(), program)?;
+        let (mut insts, reg) = ctx.get_value(&cond_loc, &[]);
+        let true_target = ctx
+            .get_label_name(self.true_bb(), program)
+            .ok_or(AsmError::UnknownBranchTarget)?;
+        let false_target = ctx
+            .get_label_name(self.false_bb(), program)
+            .ok_or(AsmError::UnknownBranchTarget)?;
+        insts.push(Box::new(Bnez {
+            rs: reg,
+            label: true_target,
+        }));
+        insts.push(Box::new(Jmp {
+            label: false_target,
+        }));
+        if ctx.symbol_table.get_symbol_from_loc(&cond_loc).is_none() {
+            ctx.deallocate_reg(reg);
+        }
+        Ok(insts)
+    }
+}
+
 impl ToAsm for Jump {
     type Output = Vec<Box<dyn Inst>>;
 
     fn to_asm(&self, ctx: &mut Context, program: &Program) -> Result<Self::Output, AsmError> {
-        let func = ctx.func.ok_or(AsmError::UnknownFunction)?;
-        let func_data = program.func(func);
-        let target = func_data.dfg().bb(self.target());
-        let target_name = target
-            .name()
-            .clone()
-            .map(|name| label_name(&func_data.name(), &name))
-            .unwrap_or(ctx.name_generator.generate_label_name());
-        Ok(vec![Box::new(Jmp { label: target_name })])
+        let target_name = ctx
+            .get_label_name(self.target(), program)
+            .ok_or(AsmError::UnknownJumpTarget)?;
+        let current_bb = ctx.current_bb.ok_or(AsmError::NoBasicBlock)?;
+        let target_next_bb = ctx
+            .next_block(current_bb, program)
+            .map(|bb| {
+                ctx.get_label_name(bb, program)
+                    .map(|name| name == target_name)
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false);
+        if !target_next_bb {
+            Ok(vec![Box::new(Jmp { label: target_name })])
+        } else {
+            Ok(vec![])
+        }
     }
 }
 
@@ -239,15 +267,7 @@ impl ToAsm for Store {
         let func = ctx.func.ok_or(AsmError::UnknownFunction)?;
         let func_data = program.func(func);
         let value = self.value();
-        let store_value = func_data.dfg().value(value);
-        let store_value = match store_value.ty().kind() {
-            TypeKind::Int32 => get_location(value, ctx, program)?,
-            _ => ctx
-                .temp_value_table
-                .get(&value)
-                .ok_or(AsmError::NoTempValue)?
-                .clone(),
-        };
+        let store_value = ctx.get_location(value, program)?;
         let dest = func_data
             .dfg()
             .value(self.dest())
@@ -311,21 +331,6 @@ impl ToAsm for Load {
     }
 }
 
-fn get_location(value: Value, ctx: &Context, program: &Program) -> Result<ValueLocation, AsmError> {
-    let func = ctx.func.ok_or(AsmError::UnknownFunction)?;
-    let func_data = program.func(func);
-    let value_data = func_data.dfg().value(value);
-    if let ValueKind::Integer(c) = value_data.kind() {
-        Ok(ValueLocation::Immediate(c.value()))
-    } else {
-        Ok(ctx
-            .temp_value_table
-            .get(&value)
-            .ok_or(AsmError::NoTempValue)?
-            .clone())
-    }
-}
-
 impl ToAsm for Binary {
     type Output = (Vec<Box<dyn Inst>>, ValueLocation);
 
@@ -334,11 +339,10 @@ impl ToAsm for Binary {
         let rhs = self.rhs();
         let mut insts: Vec<Box<dyn Inst>> = vec![];
 
-        // Pop the temporary value location from the stack.
-        let lhs_loc = get_location(lhs, ctx, program)?;
+        let lhs_loc = ctx.get_location(lhs, program)?;
         let (load_lhs, lhs_reg) = ctx.get_value(&lhs_loc, &[]);
 
-        let rhs_loc = get_location(rhs, ctx, program)?;
+        let rhs_loc = ctx.get_location(rhs, program)?;
         let (load_rhs, rhs_reg) = ctx.get_value(&rhs_loc, &[lhs_reg]);
         insts.extend(load_lhs);
         insts.extend(load_rhs);
@@ -394,11 +398,11 @@ impl ToAsm for Binary {
 
         insts.extend(cal_insts);
 
-        if lhs_reg != temp_reg && ctx.symbol_table.get_symbol_from_loc(&lhs_loc).is_none() {
-            ctx.deallocate_reg(lhs_reg)
+        if rs1 != rd && ctx.symbol_table.get_symbol_from_loc(&lhs_loc).is_none() {
+            ctx.deallocate_reg(rs1);
         }
-        if rhs_reg != temp_reg && ctx.symbol_table.get_symbol_from_loc(&rhs_loc).is_none() {
-            ctx.deallocate_reg(rhs_reg)
+        if rs2 != rd && ctx.symbol_table.get_symbol_from_loc(&rhs_loc).is_none() {
+            ctx.deallocate_reg(rs2);
         }
         let temp_val = ValueLocation::Register(rd);
         Ok((insts, temp_val))
@@ -411,33 +415,18 @@ impl ToAsm for Return {
     fn to_asm(&self, ctx: &mut Context, program: &Program) -> Result<Self::Output, AsmError> {
         let mut insts: Vec<Box<dyn Inst>> = vec![];
         if let Some(val) = self.value() {
-            let func_data = program.func(ctx.func.ok_or(AsmError::UnknownFunction)?);
-            let val_data = func_data.dfg().value(val);
-            match val_data.kind() {
-                ValueKind::Integer(c) => insts.push(Box::new(LoadImm {
-                    rd: A0,
-                    imm: c.value(),
-                })),
-                ValueKind::Binary(_) | ValueKind::Load(_) => {
-                    let mut insts: Vec<Box<dyn Inst>> = vec![];
-                    let ret_val = ctx
-                        .temp_value_table
-                        .get(&val)
-                        .ok_or(AsmError::NoTempValue)?
-                        .clone();
-                    let (load, reg) = ctx.get_value(&ret_val, &[]);
-                    insts.extend(load);
-                    if reg != A0 {
-                        // We need to move the value to register a0.
-                        insts.push(Box::new(Move { rd: A0, rs: reg }));
-                        if ctx.symbol_table.get_symbol_from_loc(&ret_val).is_none() {
-                            ctx.deallocate_reg(reg)
-                        }
+            let ret_val_loc = ctx.get_location(val, program)?;
+            if let ValueLocation::Immediate(n) = ret_val_loc {
+                insts.push(Box::new(LoadImm { rd: A0, imm: n }));
+            } else {
+                let (load, reg) = ctx.get_value(&ret_val_loc, &[]);
+                insts.extend(load);
+                if reg != A0 {
+                    insts.push(Box::new(Move { rd: A0, rs: reg }));
+                    if ctx.symbol_table.get_symbol_from_loc(&ret_val_loc).is_none() {
+                        ctx.deallocate_reg(reg);
                     }
-                    insts.push(Box::new(Ret));
-                    return Ok(insts);
                 }
-                _ => unimplemented!(),
             }
         }
         insts.push(Box::new(Ret));

@@ -18,6 +18,6 @@ pub fn generate_ir(comp_unit: CompUnit) -> Program {
     comp_unit.generate_ir(&mut ctx).unwrap_or_else(|e| {
         show_error(&format!("{:?}", e), 2);
     });
-    ctx.delete_unused_bb();
+    ctx.delete_and_link();
     ctx.program()
 }

@@ -12,7 +12,6 @@ build = "build.rs"
 lalrpop-util = { version = "0.22.0", features = ["lexer", "unicode"] }
 koopa = "0.0.7"
 colored = "2.1.0"
-rctree = "0.6.0"
 concat-idents = "1.1.5"
 compiler_macro = { path = "./compiler_macro" }
 
