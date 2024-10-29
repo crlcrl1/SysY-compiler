@@ -1,3 +1,4 @@
+pub mod context;
 pub mod eval;
 pub mod macros;
 pub mod scope;
@@ -7,171 +8,13 @@ use crate::front::ident::Identifier;
 use crate::front::ir::eval::Eval;
 use crate::front::ir::scope::Scope;
 use crate::util::logger::show_error;
-use crate::{add_bb, add_inst, new_bb, new_value};
-use koopa::ir::builder::{BasicBlockBuilder, LocalInstBuilder, ValueBuilder};
-use koopa::ir::{BasicBlock, BinaryOp, Function, FunctionData, Program, Type, Value, ValueKind};
+use crate::{add_bb, add_inst, new_value};
+use context::Context;
+use koopa::ir::builder::{LocalInstBuilder, ValueBuilder};
+use koopa::ir::{BinaryOp, FunctionData, Type, Value};
 use std::rc::Rc;
 
 type Return = Option<Expr>;
-
-/// Context of the IR generation
-pub struct Context {
-    program: Program,
-    func: Option<Function>,
-    scope: Scope,
-    current_bb: Option<BasicBlock>,
-    max_basic_block_id: usize,
-    max_temp_value_id: usize,
-}
-
-impl Context {
-    pub fn new(scope: Scope) -> Self {
-        Self {
-            program: Program::new(),
-            func: None,
-            scope,
-            current_bb: None,
-            max_basic_block_id: 0,
-            max_temp_value_id: 0,
-        }
-    }
-
-    fn new_bb(&mut self) -> Result<BasicBlock, ParseError> {
-        self.max_basic_block_id += 1;
-        self.func.ok_or(ParseError::FunctionNotFound).map(|func| {
-            let func_data = self.program.func_mut(func);
-            new_bb!(func_data).basic_block(Some(format!("%bb{}", self.max_basic_block_id)))
-        })
-    }
-
-    fn get_func(&self) -> Result<Function, ParseError> {
-        self.func.ok_or(ParseError::FunctionNotFound)
-    }
-
-    fn get_bb(&self) -> Result<BasicBlock, ParseError> {
-        self.current_bb.ok_or(ParseError::BasicBlockNotFound)
-    }
-
-    pub fn program(self) -> Program {
-        self.program
-    }
-
-    fn func_data(&self) -> Result<&FunctionData, ParseError> {
-        let func = self.get_func()?;
-        Ok(self.program.func(func))
-    }
-
-    fn func_data_mut(&mut self) -> Result<&mut FunctionData, ParseError> {
-        let func = self.get_func()?;
-        Ok(self.program.func_mut(func))
-    }
-
-    /// Delete unused basic block and link the basic block
-    pub fn delete_and_link(&mut self) {
-        for (_, func_data) in self.program.funcs_mut() {
-            // get all jump and branch target
-            let mut target = vec![];
-            for (_, bb_node) in func_data.layout().bbs() {
-                for value in bb_node.insts().keys() {
-                    let value_data = func_data.dfg().value(*value);
-                    match value_data.kind() {
-                        ValueKind::Branch(branch) => {
-                            target.push(branch.true_bb());
-                            target.push(branch.false_bb());
-                        }
-                        ValueKind::Jump(jump) => {
-                            target.push(jump.target());
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            let entry_bb = func_data.layout().entry_bb().unwrap();
-            if !target.contains(&entry_bb) {
-                target.push(entry_bb);
-            }
-
-            // delete empty basic block
-            let mut bb_to_delete = vec![];
-            for (bb_id, bb_node) in func_data.layout().bbs() {
-                if bb_node.insts().is_empty() && !target.contains(&bb_id) {
-                    bb_to_delete.push(*bb_id);
-                }
-            }
-            for bb_id in bb_to_delete {
-                func_data.layout_mut().bbs_mut().remove(&bb_id);
-            }
-
-            let bbs = func_data.layout().bbs();
-            let mut jumps = vec![];
-            let mut rets = vec![];
-
-            // add jump and ret instruction
-            for i in 0..bbs.len() {
-                let bb = bbs.keys().nth(i).unwrap();
-                let bb_node = bbs.node(bb).unwrap();
-                if let Some(last_inst) = bb_node.insts().keys().last() {
-                    let last_inst = func_data.dfg().value(*last_inst);
-                    match last_inst.kind() {
-                        ValueKind::Branch(_) | ValueKind::Return(_) | ValueKind::Jump(_) => {
-                            continue;
-                        }
-                        _ => {}
-                    }
-                }
-                if let Some(next_bb) = bbs.keys().nth(i + 1) {
-                    jumps.push((*bb, *next_bb));
-                } else {
-                    rets.push(*bb);
-                }
-            }
-
-            jumps.iter().for_each(|(a, b)| {
-                let jump = new_value!(func_data).jump(*b);
-                add_inst!(func_data, *a, jump);
-            });
-            rets.iter().for_each(|bb| {
-                let ret = new_value!(func_data).ret(None);
-                add_inst!(func_data, *bb, ret);
-            });
-        }
-    }
-
-    /// Whether the block is end with a jump, branch or return instruction
-    fn block_ended(&mut self, bb: BasicBlock) -> Result<bool, ParseError> {
-        let inst = self
-            .func_data_mut()?
-            .layout_mut()
-            .bb_mut(bb)
-            .insts()
-            .back_key()
-            .copied();
-        if let Some(inst) = inst {
-            let inst = self.func_data()?.dfg().value(inst);
-            match inst.kind() {
-                ValueKind::Branch(_) | ValueKind::Jump(_) | ValueKind::Return(_) => Ok(true),
-                _ => Ok(false),
-            }
-        } else {
-            Ok(false)
-        }
-    }
-
-    /// If a block is not ended, end the block with a jump instruction
-    fn end_block(&mut self, bb: BasicBlock, target: BasicBlock) -> Result<(), ParseError> {
-        if !self.block_ended(bb)? {
-            let func_data = self.func_data_mut()?;
-            let jump = new_value!(func_data).jump(target);
-            add_inst!(func_data, bb, jump);
-        }
-        Ok(())
-    }
-
-    fn temp_value_name(&mut self) -> String {
-        self.max_temp_value_id += 1;
-        format!("@__t{}", self.max_temp_value_id)
-    }
-}
 
 #[derive(Debug)]
 pub enum ParseError {
@@ -180,6 +23,8 @@ pub enum ParseError {
     BasicBlockNotFound,
     UnknownIdentifier,
     ConstExprError,
+    BreakOutsideLoop,
+    ContinueOutsideLoop,
 }
 
 pub trait GenerateIR {
@@ -605,12 +450,79 @@ impl GenerateIR for Stmt {
                 Ok(())
             }
             Stmt::If(if_stmt) => if_stmt.generate_ir(ctx),
-            Stmt::While(_) => Ok(()),
+            Stmt::While(while_stmt) => while_stmt.generate_ir(ctx),
             Stmt::Return(ret) => ret.generate_ir(ctx),
-            Stmt::Break => Ok(()),
-            Stmt::Continue => Ok(()),
+            Stmt::Break(break_stmt) => break_stmt.generate_ir(ctx),
+            Stmt::Continue(continue_stmt) => continue_stmt.generate_ir(ctx),
             Stmt::Empty => Ok(()),
         }
+    }
+}
+
+impl GenerateIR for Break {
+    type Output = ();
+
+    fn generate_ir(&self, ctx: &mut Context) -> Result<(), ParseError> {
+        let end_bb = ctx
+            .get_while_info()
+            .ok_or(ParseError::BreakOutsideLoop)?
+            .end_bb;
+        let jump = new_value!(ctx.func_data_mut()?).jump(end_bb);
+        let bb = ctx.get_bb()?;
+        add_inst!(ctx.func_data_mut()?, bb, jump);
+        Ok(())
+    }
+}
+
+impl GenerateIR for Continue {
+    type Output = ();
+
+    fn generate_ir(&self, ctx: &mut Context) -> Result<(), ParseError> {
+        let start_bb = ctx
+            .get_while_info()
+            .ok_or(ParseError::ContinueOutsideLoop)?
+            .start_bb;
+        let jump = new_value!(ctx.func_data_mut()?).jump(start_bb);
+        let bb = ctx.get_bb()?;
+        add_inst!(ctx.func_data_mut()?, bb, jump);
+        Ok(())
+    }
+}
+
+impl GenerateIR for While {
+    type Output = ();
+    fn generate_ir(&self, ctx: &mut Context) -> Result<Self::Output, ParseError> {
+        let body_bb = ctx.new_bb()?;
+        let end_bb = ctx.new_bb()?;
+        let start_bb = ctx.new_bb()?;
+        add_bb!(ctx.func_data_mut()?, start_bb);
+        ctx.current_bb = Some(start_bb);
+        let cond_value = self.cond.generate_ir(ctx)?;
+        let start_branch_bb = ctx.get_bb()?;
+        // branch to body or end
+        let branch = new_value!(ctx.func_data_mut()?).branch(cond_value, body_bb, end_bb);
+        add_inst!(ctx.func_data_mut()?, start_branch_bb, branch);
+        add_bb!(ctx.func_data_mut()?, body_bb);
+
+        // generate body
+        ctx.add_while_info(start_bb, end_bb);
+        ctx.current_bb = Some(body_bb);
+        self.body.generate_ir(ctx)?;
+
+        // jump to start_bb
+        let body_bb_end = ctx.get_bb()?;
+        let jump_start = new_value!(ctx.func_data_mut()?).jump(start_bb);
+        if !ctx.block_ended(body_bb_end)? {
+            add_inst!(ctx.func_data_mut()?, body_bb_end, jump_start);
+        } else {
+            let body_bb_end = ctx.new_bb()?;
+            add_bb!(ctx.func_data_mut()?, body_bb_end);
+            add_inst!(ctx.func_data_mut()?, body_bb_end, jump_start);
+        }
+        add_bb!(ctx.func_data_mut()?, end_bb);
+        ctx.current_bb = Some(end_bb);
+        ctx.pop_while_info();
+        Ok(())
     }
 }
 
@@ -625,9 +537,9 @@ impl GenerateIR for Block {
         for block_item in &self.items {
             match block_item {
                 BlockItem::Stmt(stmt) => match stmt {
-                    Stmt::Return(_) => {
+                    Stmt::Return(_) | Stmt::Break(_) | Stmt::Continue(_) => {
                         stmt.generate_ir(ctx)?;
-                        // Once return is called, we don't need to generate any more IR
+                        // Once return, break or continue is called, we don't need to generate any more IR
                         break;
                     }
                     _ => stmt.generate_ir(ctx)?,

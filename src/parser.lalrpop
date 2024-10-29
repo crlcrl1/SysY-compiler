@@ -283,9 +283,9 @@ IfMatchStmt: Stmt = {
 
     "while" "(" <cond: LOrExpr> ")" <stmt: IfMatchStmt> => Stmt::While(While { cond, body: Rc::new(stmt) }),
 
-    "break" ";" => Stmt::Break,
+    "break" ";" => Stmt::Break(Break),
 
-    "continue" ";" => Stmt::Continue,
+    "continue" ";" => Stmt::Continue(Continue),
 
     "return" <expr: Expr?> ";" => Stmt::Return(expr),
 

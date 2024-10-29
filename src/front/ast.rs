@@ -121,6 +121,12 @@ pub enum BlockItem {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
+pub struct Break;
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+pub struct Continue;
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub enum Stmt {
     Assign(Assign),
     Expr(Expr),
@@ -128,8 +134,8 @@ pub enum Stmt {
     If(If),
     While(While),
     Return(Option<Expr>),
-    Break,
-    Continue,
+    Break(Break),
+    Continue(Continue),
     Empty,
 }
 
