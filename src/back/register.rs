@@ -36,7 +36,6 @@ regs!(
     T0, t0;
     T1, t1;
     T2, t2;
-    S0, s0;
     FP, fp;
     S1, s1;
     A0, a0;

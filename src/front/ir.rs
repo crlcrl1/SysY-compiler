@@ -1,3 +1,4 @@
+pub mod builtin;
 pub mod context;
 pub mod eval;
 pub mod macros;
@@ -5,12 +6,13 @@ pub mod scope;
 
 use crate::front::ast::*;
 use crate::front::ident::Identifier;
+use crate::front::ident::Type as IdentType;
 use crate::front::ir::eval::Eval;
 use crate::front::ir::scope::Scope;
 use crate::util::logger::show_error;
 use crate::{add_bb, add_inst, new_value};
 use context::Context;
-use koopa::ir::builder::{LocalInstBuilder, ValueBuilder};
+use koopa::ir::builder::{GlobalInstBuilder, LocalInstBuilder, ValueBuilder};
 use koopa::ir::{BinaryOp, FunctionData, Type, Value};
 use std::rc::Rc;
 
@@ -63,9 +65,9 @@ impl GenerateIR for VarDef {
     fn generate_ir(&self, ctx: &mut Context) -> Result<Value, ParseError> {
         match self {
             VarDef::NormalVarDef(normal_var_def) => {
-                if let Ok(_) = ctx.get_func() {
-                    let scope_id = ctx.scope.current_scope_id();
-                    let var_name = format!("@_{}_{}", scope_id, normal_var_def.name);
+                let scope_id = ctx.scope.current_scope_id();
+                let var_name = format!("@_{}_{}", scope_id, normal_var_def.name);
+                if !ctx.is_global() {
                     let bb = ctx.get_bb()?;
                     let func_data = ctx.func_data_mut()?;
                     // allocate variable
@@ -86,18 +88,30 @@ impl GenerateIR for VarDef {
                     ctx.scope
                         .add_identifier(
                             normal_var_def.name.clone(),
-                            Identifier::from_variable(self.clone()),
+                            Identifier::from_variable(var_alloc),
                         )
                         .unwrap_or_else(|e| {
                             show_error(&format!("{:?}", e), 2);
                         });
-                    ctx.scope
-                        .get_identifier_mut(&normal_var_def.name)
-                        .unwrap()
-                        .set_koopa_def(var_alloc);
                     Ok(var_alloc)
                 } else {
-                    unimplemented!()
+                    let val = normal_var_def
+                        .value
+                        .as_ref()
+                        .map(|x| x.eval(&mut ctx.scope).unwrap_or(0))
+                        .unwrap_or(0);
+                    let val = ctx.program.new_value().integer(val);
+                    let var_alloc = ctx.program.new_value().global_alloc(val);
+                    ctx.program.set_value_name(var_alloc, Some(var_name));
+                    ctx.scope
+                        .add_identifier(
+                            normal_var_def.name.clone(),
+                            Identifier::from_variable(var_alloc),
+                        )
+                        .unwrap_or_else(|e| {
+                            show_error(&format!("{:?}", e), 2);
+                        });
+                    Ok(var_alloc)
                 }
             }
             VarDef::ArrayVarDef(_) => {
@@ -113,26 +127,19 @@ impl GenerateIR for ConstDef {
     fn generate_ir(&self, ctx: &mut Context) -> Result<(), ParseError> {
         match self {
             ConstDef::NormalConstDef(normal) => {
-                if let Ok(_) = ctx.get_func() {
-                    let val = normal
-                        .value
-                        .eval(&mut ctx.scope)
-                        .map_err(|_| ParseError::ConstExprError)?;
-                    let func_data = ctx.func_data_mut()?;
-                    let val = new_value!(func_data).integer(val);
-                    ctx.scope
-                        .add_identifier(
-                            normal.name.clone(),
-                            Identifier::from_constant(self.clone(), val),
-                        )
-                        .unwrap_or_else(|e| {
-                            show_error(&format!("{:?}", e), 2);
-                        });
-                    Ok(())
-                } else {
-                    // TODO: Implement global constant
-                    unimplemented!()
-                }
+                let val = normal
+                    .value
+                    .eval(&mut ctx.scope)
+                    .map_err(|_| ParseError::ConstExprError)?;
+                ctx.scope
+                    .add_identifier(
+                        normal.name.clone(),
+                        Identifier::from_constant(val, IdentType::Normal),
+                    )
+                    .unwrap_or_else(|e| {
+                        show_error(&format!("{:?}", e), 2);
+                    });
+                Ok(())
             }
             ConstDef::ArrayConstDef(_) => unimplemented!(),
         }
@@ -154,16 +161,16 @@ impl GenerateIR for LVal {
                 let val = match ident {
                     Identifier::Variable(ref var) => {
                         let bb = ctx.get_bb()?;
-                        let var_def = var.koopa_def.ok_or(ParseError::UnknownIdentifier)?;
+                        let var_def = var.koopa_def;
                         let load = new_value!(ctx.func_data_mut()?).load(var_def);
                         add_inst!(ctx.func_data_mut()?, bb, load);
                         load
                     }
-                    Identifier::Constant(ref constant) => constant.koopa_def,
-                    Identifier::FunctionParam(ref param) => {
-                        param.koopa_def.ok_or(ParseError::UnknownIdentifier)?
+                    Identifier::Constant(ref constant) => {
+                        let val = constant.value;
+                        new_value!(ctx.func_data_mut()?).integer(val)
                     }
-                    Identifier::Function(_) => return Err(ParseError::InvalidExpr),
+                    Identifier::FunctionParam(ref param) => param.koopa_def,
                 };
                 Ok(val)
             }
@@ -196,9 +203,7 @@ impl GenerateIR for UnaryExpr {
     fn generate_ir(&self, ctx: &mut Context) -> Result<Value, ParseError> {
         match self {
             UnaryExpr::PrimaryExpr(expr) => expr.generate_ir(ctx),
-            UnaryExpr::FuncCall(_) => {
-                unimplemented!()
-            }
+            UnaryExpr::FuncCall(func_call) => func_call.generate_ir(ctx),
             UnaryExpr::Unary(op, expr) => {
                 let expr = expr.generate_ir(ctx)?;
                 let current_bb = ctx.get_bb()?;
@@ -220,6 +225,28 @@ impl GenerateIR for UnaryExpr {
                 }
             }
         }
+    }
+}
+
+impl GenerateIR for FuncCall {
+    type Output = Value;
+
+    fn generate_ir(&self, ctx: &mut Context) -> Result<Value, ParseError> {
+        let param_values = self
+            .args
+            .iter()
+            .map(|arg| arg.generate_ir(ctx))
+            .collect::<Result<Vec<Value>, ParseError>>()?;
+        let func_name = &self.name;
+        let func = ctx
+            .func_table
+            .get(func_name)
+            .copied()
+            .ok_or(ParseError::FunctionNotFound)?;
+        let ret_val = new_value!(ctx.func_data_mut()?).call(func, param_values);
+        let current_bb = ctx.get_bb()?;
+        add_inst!(ctx.func_data_mut()?, current_bb, ret_val);
+        Ok(ret_val)
     }
 }
 
@@ -419,19 +446,36 @@ impl GenerateIR for FuncDef {
         let func_data =
             FunctionData::with_param_names("@".to_string() + &self.name, func_params, ret_type);
         let func = ctx.program.new_func(func_data);
+        ctx.func_table.insert(self.name.clone(), func);
+        ctx.func = Some(func);
+        let store_bb = ctx.new_bb()?;
         let func_data = ctx.program.func_mut(func);
         ctx.scope.go_into_scoop(self.body.id);
-        ctx.func = Some(func);
-        for param in func_data.params() {
-            let param_data = func_data.dfg().value(*param);
-            let param_name = &param_data.name().clone().unwrap()[1..];
-            ctx.scope
-                .get_identifier_mut(param_name)
+        add_bb!(func_data, store_bb);
+        let params = func_data.params().iter().copied().collect::<Vec<_>>();
+        for param in params {
+            // TODO: When a parameter is not reassigned, we don't need to allocate a new space
+            let param_data = func_data.dfg().value(param);
+            let param_name = param_data
+                .name()
+                .clone()
+                .map(|s| s[1..].to_string())
                 .unwrap()
-                .set_koopa_def(*param);
+                .to_string();
+            let alloc_param = new_value!(func_data).alloc(Type::get_i32());
+            func_data
+                .dfg_mut()
+                .set_value_name(alloc_param, Some(format!("@_p_{}", param_name)));
+            let store = new_value!(func_data).store(param, alloc_param);
+            add_inst!(func_data, store_bb, alloc_param);
+            add_inst!(func_data, store_bb, store);
+            ctx.scope
+                .add_identifier(param_name, Identifier::from_variable(alloc_param))
+                .map_err(|e| show_error(&format!("{:?}", e), 2))?;
         }
         self.body.generate_ir(ctx)?;
         ctx.scope.go_out_scoop();
+        ctx.func = None;
         Ok(())
     }
 }
@@ -544,24 +588,33 @@ impl GenerateIR for Block {
                     }
                     _ => stmt.generate_ir(ctx)?,
                 },
-                BlockItem::Decl(decl) => match decl {
-                    Decl::ConstDecl(const_decl) => {
-                        for const_def in const_decl {
-                            const_def.generate_ir(ctx)?;
-                        }
-                    }
-                    Decl::VarDecl(decl) => {
-                        for var_def in decl {
-                            var_def.generate_ir(ctx)?;
-                        }
-                    }
-                },
+                BlockItem::Decl(decl) => decl.generate_ir(ctx)?,
             }
         }
         let bb = ctx.new_bb()?;
         let func_data = ctx.func_data_mut()?;
         add_bb!(func_data, bb);
         ctx.current_bb = Some(bb);
+        Ok(())
+    }
+}
+
+impl GenerateIR for Decl {
+    type Output = ();
+
+    fn generate_ir(&self, ctx: &mut Context) -> Result<(), ParseError> {
+        match self {
+            Decl::ConstDecl(const_decl) => {
+                for const_def in const_decl {
+                    const_def.generate_ir(ctx)?;
+                }
+            }
+            Decl::VarDecl(var_decl) => {
+                for var_def in var_decl {
+                    var_def.generate_ir(ctx)?;
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -661,7 +714,9 @@ impl GenerateIR for CompUnit {
     fn generate_ir(&self, ctx: &mut Context) -> Result<(), ParseError> {
         for item in &self.items {
             match item {
-                GlobalItem::Decl(_) => {}
+                GlobalItem::Decl(decl) => {
+                    decl.generate_ir(ctx)?;
+                }
                 GlobalItem::FuncDef(func_def) => {
                     func_def.generate_ir(ctx)?;
                 }

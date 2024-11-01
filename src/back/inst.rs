@@ -4,6 +4,7 @@ use concat_idents::concat_idents;
 
 pub trait Inst {
     fn dump(&self) -> String;
+    fn is_branch(&self) -> bool;
 }
 
 macro_rules! eval_inst {
@@ -34,6 +35,7 @@ macro_rules! eval_inst_with_imm {
 
 /// Jump if equal zero
 #[derive(Debug, Clone, Inst, Eq, PartialEq)]
+#[is_branch]
 pub struct Beqz {
     pub rs: Register,
     pub label: String,
@@ -41,6 +43,7 @@ pub struct Beqz {
 
 /// Jump if not equal zero
 #[derive(Debug, Clone, Inst, Eq, PartialEq)]
+#[is_branch]
 pub struct Bnez {
     pub rs: Register,
     pub label: String,
@@ -48,6 +51,7 @@ pub struct Bnez {
 
 #[derive(Debug, Clone, Inst, Eq, PartialEq)]
 #[asm_name = "j"]
+#[is_branch]
 pub struct Jmp {
     pub label: String,
 }

@@ -2,10 +2,19 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{Attribute, Data, DeriveInput, Expr, Fields, Lit, Meta};
 
-#[proc_macro_derive(Inst, attributes(asm_name))]
+#[proc_macro_derive(Inst, attributes(asm_name, is_branch))]
 pub fn inst_macro(input: TokenStream) -> TokenStream {
     let ast = syn::parse(input).unwrap();
     inst_macro_impl(ast)
+}
+
+fn is_branch(attrs: &[Attribute]) -> bool {
+    for attr in attrs {
+        if attr.path().is_ident("is_branch") {
+            return true;
+        }
+    }
+    false
 }
 
 fn get_asm_name(attrs: &[Attribute]) -> Option<String> {
@@ -58,10 +67,16 @@ fn inst_macro_impl(ast: DeriveInput) -> TokenStream {
     if format_str.ends_with(",") {
         format_str.pop();
     }
+
+    let is_branch = is_branch(&ast.attrs);
     let gen = quote! {
         impl Inst for #name {
             fn dump(&self) -> String {
                 format!(#format_str, #(self.#fields.to_string(),)*)
+            }
+
+            fn is_branch(&self) -> bool {
+                #is_branch
             }
         }
     };

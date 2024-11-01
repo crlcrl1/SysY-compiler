@@ -1,6 +1,5 @@
 use crate::util::logger::show_error;
 use std::env::args;
-use std::process::exit;
 
 #[derive(Debug, Clone)]
 pub struct Params {

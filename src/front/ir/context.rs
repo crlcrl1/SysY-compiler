@@ -3,6 +3,7 @@ use crate::front::ir::ParseError;
 use crate::{add_inst, new_bb, new_value};
 use koopa::ir::builder::{BasicBlockBuilder, LocalInstBuilder, ValueBuilder};
 use koopa::ir::{BasicBlock, Function, FunctionData, Program, TypeKind, ValueKind};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct WhileInfo {
@@ -19,6 +20,7 @@ pub struct Context {
     pub max_basic_block_id: usize,
     pub max_temp_value_id: usize,
     pub while_info: Vec<WhileInfo>,
+    pub func_table: HashMap<String, Function>,
 }
 
 impl Context {
@@ -31,6 +33,7 @@ impl Context {
             max_basic_block_id: 0,
             max_temp_value_id: 0,
             while_info: vec![],
+            func_table: HashMap::new(),
         }
     }
 
@@ -64,9 +67,17 @@ impl Context {
         Ok(self.program.func_mut(func))
     }
 
+    pub fn is_global(&self) -> bool {
+        self.func.is_none()
+    }
+
     /// Delete unused basic block and link the basic block
     pub fn delete_and_link(&mut self) {
         for (_, func_data) in self.program.funcs_mut() {
+            if func_data.dfg().bbs().is_empty() {
+                continue;
+            }
+
             let return_type = match func_data.ty().kind() {
                 TypeKind::Function(_, ret) => ret.clone(),
                 _ => unreachable!(),

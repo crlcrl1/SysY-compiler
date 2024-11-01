@@ -6,16 +6,13 @@ pub trait Assembly {
 
 enum AsmProgramItem {
     VarDecl(AsmVarDecl),
-    ConstDecl(AsmConstDecl),
     FuncDecl(AsmFunc),
 }
 
 pub struct AsmVarDecl {
-    // TODO
-}
-
-pub struct AsmConstDecl {
-    // TODO
+    name: String,
+    size: usize,
+    init: Option<Vec<i32>>,
 }
 
 pub struct AsmFunc {
@@ -36,15 +33,23 @@ impl Assembly for AsmProgram {
     fn dump(&self) -> String {
         let mut s = String::new();
         let mut funcs = String::new();
+        let mut vars = String::new();
         for item in &self.items {
             match item {
                 AsmProgramItem::FuncDecl(func_decl) => {
                     funcs.push_str(&func_decl.dump());
+                    funcs.push_str("\n\n");
                 }
-                _ => {}
+                AsmProgramItem::VarDecl(var_decl) => {
+                    vars.push_str(&var_decl.dump());
+                }
             }
         }
-        s.push_str("\t.text\n");
+        if !vars.is_empty() {
+            s.push_str("\t.data\n");
+            s.push_str(&vars);
+        }
+        s.push_str("\n\n\t.text\n");
         s.push_str(&funcs);
         s
     }
@@ -55,16 +60,12 @@ impl AsmProgram {
         Self { items: Vec::new() }
     }
 
-    pub fn add_func_decl(&mut self, func_decl: AsmFunc) {
+    pub fn add_func(&mut self, func_decl: AsmFunc) {
         self.items.push(AsmProgramItem::FuncDecl(func_decl));
     }
 
     pub fn add_var_decl(&mut self, var_decl: AsmVarDecl) {
         self.items.push(AsmProgramItem::VarDecl(var_decl));
-    }
-
-    pub fn add_const_decl(&mut self, const_decl: AsmConstDecl) {
-        self.items.push(AsmProgramItem::ConstDecl(const_decl));
     }
 }
 
@@ -76,6 +77,27 @@ impl Assembly for AsmFunc {
         for block in &self.body {
             s.push_str(&block.dump());
             s.push_str("\n");
+        }
+        s
+    }
+}
+
+impl Assembly for AsmVarDecl {
+    fn dump(&self) -> String {
+        let mut s = String::new();
+        s.push_str(&format!("\t.globl {}\n", self.name));
+        s.push_str(&format!("{}:\n", self.name));
+        if let Some(init) = &self.init {
+            for (i, val) in init.iter().enumerate() {
+                s.push_str(&format!("\t.word {}\n", val));
+                if i == self.size - 1 {
+                    break;
+                }
+            }
+        } else {
+            for _ in 0..self.size {
+                s.push_str("\t.word 0\n");
+            }
         }
         s
     }
@@ -126,6 +148,12 @@ impl AsmFunc {
     }
 }
 
+impl AsmVarDecl {
+    pub fn new(name: String, size: usize, init: Option<Vec<i32>>) -> Self {
+        Self { name, size, init }
+    }
+}
+
 impl Assembly for AsmBlock {
     fn dump(&self) -> String {
         let mut s = String::new();
@@ -147,6 +175,18 @@ impl AsmBlock {
 
     pub fn add_inst<T: Inst + 'static>(&mut self, inst: T) {
         self.items.push(Box::new(inst));
+    }
+
+    pub fn add_inst_before_branch<T: Inst + 'static>(&mut self, inst: T) {
+        let mut insert_pos = self.items.len();
+        for inst in self.items.iter().rev() {
+            if inst.is_branch() {
+                insert_pos -= 1
+            } else {
+                break;
+            }
+        }
+        self.items.insert(insert_pos, Box::new(inst));
     }
 
     pub fn add_insts(&mut self, insts: Vec<Box<dyn Inst>>) {

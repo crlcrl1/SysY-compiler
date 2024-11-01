@@ -267,39 +267,6 @@ pub struct FuncCall {
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct ConstExpr(pub Rc<LOrExpr>);
 
-impl VarDef {
-    pub fn get_name(&self) -> &str {
-        match self {
-            VarDef::NormalVarDef(normal_var_def) => &normal_var_def.name,
-            VarDef::ArrayVarDef(array_var_def) => &array_var_def.name,
-        }
-    }
-}
-
-impl ConstDef {
-    pub fn get_name(&self) -> &str {
-        match self {
-            ConstDef::NormalConstDef(normal_const_def) => &normal_const_def.name,
-            ConstDef::ArrayConstDef(array_const_def) => &array_const_def.name,
-        }
-    }
-}
-
-impl FuncDef {
-    pub fn get_name(&self) -> &str {
-        &self.name
-    }
-}
-
-impl FuncFParam {
-    pub fn get_name(&self) -> &str {
-        match self {
-            FuncFParam::NormalFParam(normal_f_param) => &normal_f_param.name,
-            FuncFParam::ArrayFParam(array_f_param) => &array_f_param.name,
-        }
-    }
-}
-
 impl Into<BinaryOp> for RelOp {
     fn into(self) -> BinaryOp {
         match self {

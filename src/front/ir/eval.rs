@@ -1,12 +1,12 @@
 use crate::front::ast::*;
-use crate::front::ident::Identifier;
+use crate::front::ident::{Identifier, Type};
 use crate::front::ir::scope::Scope;
-use crate::util::logger::show_error;
 
 pub enum EvalError {
     DivisionByZero,
     Overflow,
     NotSupportedVariable,
+    FunctionNotSupported,
 }
 
 fn to_bool(x: i32) -> bool {
@@ -117,9 +117,7 @@ impl Eval for UnaryExpr {
     fn eval(&self, scope: &mut Scope) -> EvalResult {
         match self {
             UnaryExpr::PrimaryExpr(primary_expr) => primary_expr.eval(scope),
-            UnaryExpr::FuncCall(_) => {
-                show_error("Function call in constant expression is not supported.", 2);
-            }
+            UnaryExpr::FuncCall(_) => Err(EvalError::FunctionNotSupported),
             UnaryExpr::Unary(op, unary_expr) => match op {
                 UnaryOp::Neg => unary_expr.eval(scope).map(|x| -x),
                 UnaryOp::Not => unary_expr.eval(scope).map(|x| if x == 0 { 1 } else { 0 }),
@@ -152,9 +150,9 @@ impl Eval for LVal {
                 if let Some(id) = scope.get_identifier(var) {
                     let id = id.clone();
                     match id {
-                        Identifier::Constant(constant) => match constant.def {
-                            ConstDef::NormalConstDef(ref const_def) => const_def.value.eval(scope),
-                            ConstDef::ArrayConstDef(_) => Err(EvalError::NotSupportedVariable),
+                        Identifier::Constant(constant) => match constant.const_type {
+                            Type::Normal => Ok(constant.value),
+                            _ => unimplemented!("Array constant"),
                         },
                         _ => Err(EvalError::NotSupportedVariable),
                     }
