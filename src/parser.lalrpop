@@ -98,11 +98,11 @@ FuncFParam: Rc<FuncFParam> = {
         param
     },
 
-    "int" <l: @L> <s: Ident> "[" "]" <a_shape: ConstArrayShape> <r: @R> => {
+    "int" <l: @L> <s: Ident> "[" "]" <a_shape: ConstArrayShape?> <r: @R> => {
         let param = Rc::new(FuncFParam::ArrayFParam(ArrayFParam{
             name: s,
             placeholder: true,
-            shape: a_shape,
+            shape: a_shape.unwrap_or(vec![]),
         }));
         param
     },

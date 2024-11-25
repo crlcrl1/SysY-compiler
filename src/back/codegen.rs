@@ -2,10 +2,18 @@ use crate::back::context::{variable_name, AsmError, Context, ValueLocation, PARA
 use crate::back::inst::*;
 use crate::back::program::{AsmBlock, AsmFunc, AsmProgram, AsmVarDecl, Assembly};
 use crate::back::register::*;
+use crate::between;
 use crate::util::logger::show_error;
-use koopa::ir::values::Call as IRCall;
+use crate::util::remove_pointer;
+use koopa::ir::entities::ValueData;
+use koopa::ir::values::{Aggregate, Call as IRCall, GetElemPtr, GetPtr};
 use koopa::ir::values::{Binary, Branch, Jump, Load, Return, Store};
-use koopa::ir::{BasicBlock, BinaryOp, Function, Program, Type, TypeKind, Value, ValueKind};
+use koopa::ir::{
+    BasicBlock, BinaryOp, Function, FunctionData, Program, Type, TypeKind, Value, ValueKind,
+};
+
+struct GlobalValue(Value);
+struct GlobalAggregate(Aggregate, usize);
 
 fn get_return_type(func: Function, program: &Program) -> Type {
     let func_data = program.func(func);
@@ -14,6 +22,23 @@ fn get_return_type(func: Function, program: &Program) -> Type {
         ret_ty.clone()
     } else {
         unreachable!()
+    }
+}
+
+fn is_symbol(value: Value, ctx: &mut Context, program: &Program) -> Result<bool, AsmError> {
+    Ok(ctx
+        .symbol_table
+        .get_symbol_from_loc(&ctx.get_location(value, program)?)
+        .is_some())
+}
+
+fn get_type(value: Value, ctx: &Context, program: &Program) -> Result<Type, AsmError> {
+    let func = ctx.func.ok_or(AsmError::UnknownFunction)?;
+    let func_data = program.func(func);
+    if func_data.dfg().values().contains_key(&value) {
+        Ok(func_data.dfg().value(value).ty().clone())
+    } else {
+        Ok(program.borrow_value(value).ty().clone())
     }
 }
 
@@ -32,18 +57,12 @@ pub fn generate_asm(program: Program) -> String {
             // Global variable name is always start with "@_0_"
             |name| name[4..].to_string(),
         );
-        let size = var_data.ty().size();
-        if let ValueKind::GlobalAlloc(global_alloc) = var_data.kind() {
-            let init = global_alloc.init();
-            let init = program.borrow_value(init);
-            let init = match init.kind() {
-                ValueKind::Integer(n) => vec![n.value()],
-                ValueKind::ZeroInit(_) => vec![0],
-                ValueKind::Aggregate(_) => unimplemented!(),
-                _ => unreachable!("Invalid global variable initialization."),
-            };
-            asm.add_var_decl(AsmVarDecl::new(name.clone(), size, Some(init)));
-        }
+        let asm_var_decl = GlobalValue(global_var)
+            .to_asm(&mut ctx, &program)
+            .unwrap_or_else(|e| {
+                show_error(&format!("{:?}", e), 3);
+            });
+        asm.add_var_decl(asm_var_decl);
         // Add global variable to the symbol table.
         ctx.symbol_table
             .insert(name.clone(), ValueLocation::GlobalValue(name));
@@ -62,6 +81,26 @@ pub fn generate_asm(program: Program) -> String {
         ctx.func = None;
     }
     asm.dump()
+}
+
+fn get_init_array(agg: &ValueData, ty: &Type, func_data: &FunctionData) -> Vec<i32> {
+    let size = ty.size();
+
+    match agg.kind() {
+        ValueKind::ZeroInit(_) => vec![0; size / 4],
+        ValueKind::Aggregate(agg) => {
+            let mut ret_val = Vec::with_capacity(size / 4);
+            for elem in agg.elems() {
+                let elem_data = func_data.dfg().value(*elem);
+                let elem_type = elem_data.ty();
+                let data = get_init_array(elem_data, elem_type, func_data);
+                ret_val.extend(data);
+            }
+            ret_val
+        }
+        ValueKind::Integer(n) => vec![n.value()],
+        _ => unreachable!(),
+    }
 }
 
 trait ToAsm {
@@ -123,17 +162,17 @@ fn prologue_insts(ctx: &mut Context, program: &Program) -> Vec<Box<dyn Inst>> {
     } else {
         insts.insert(
             0,
-            Box::new(LoadImm {
-                rd: T0,
-                imm: -stack_size,
-            }),
-        );
-        insts.insert(
-            0,
             Box::new(Add {
                 rd: SP,
                 rs1: SP,
                 rs2: T0,
+            }),
+        );
+        insts.insert(
+            0,
+            Box::new(LoadImm {
+                rd: T0,
+                imm: -stack_size,
             }),
         );
         if use_fp {
@@ -187,6 +226,66 @@ fn epilogue_insts(ctx: &Context) -> Vec<Box<dyn Inst>> {
         }))
     };
     insts
+}
+
+impl ToAsm for GlobalValue {
+    type Output = AsmVarDecl;
+    fn to_asm(&self, ctx: &mut Context, program: &Program) -> Result<Self::Output, AsmError> {
+        let var_data = program.borrow_value(self.0);
+        let original_name = var_data
+            .name()
+            .clone()
+            .unwrap_or(ctx.name_generator.generate_indent_name());
+        let name = original_name[4..].to_string();
+
+        let size = remove_pointer(var_data.ty().clone()).size();
+        if let ValueKind::GlobalAlloc(global_alloc) = var_data.kind() {
+            let init = global_alloc.init();
+            let init = program.borrow_value(init);
+            let init = match init.kind() {
+                ValueKind::Integer(n) => vec![n.value()],
+                ValueKind::ZeroInit(_) => vec![0; size / 4],
+                ValueKind::Aggregate(agg) => {
+                    GlobalAggregate(agg.clone(), size).to_asm(ctx, program)?
+                }
+                _ => unreachable!("Invalid global variable initialization."),
+            };
+            Ok(AsmVarDecl::new(name, size, Some(init)))
+        } else {
+            Err(AsmError::InvalidGlobalValue)
+        }
+    }
+}
+
+impl ToAsm for GlobalAggregate {
+    type Output = Vec<i32>;
+    fn to_asm(&self, ctx: &mut Context, program: &Program) -> Result<Self::Output, AsmError> {
+        let agg = &self.0;
+        let mut result = Vec::with_capacity(self.1 / 4);
+        for elem in agg.elems() {
+            let elem_data = program.borrow_value(*elem);
+            match elem_data.kind() {
+                ValueKind::Integer(n) => {
+                    result.push(n.value());
+                }
+                ValueKind::ZeroInit(_) => {
+                    let init_data = program.borrow_value(*elem);
+                    let size = remove_pointer(init_data.ty().clone()).size();
+                    result.extend(vec![0; size / 4]);
+                }
+                ValueKind::Aggregate(agg) => {
+                    let agg_data = program.borrow_value(*elem);
+                    let size = remove_pointer(agg_data.ty().clone()).size();
+                    let inner = GlobalAggregate(agg.clone(), size).to_asm(ctx, program)?;
+                    result.extend(inner);
+                }
+                _ => {
+                    return Err(AsmError::InvalidGlobalValue);
+                }
+            }
+        }
+        Ok(result)
+    }
 }
 
 impl ToAsm for Function {
@@ -307,35 +406,38 @@ impl ToAsm for Value {
             ValueKind::BlockArgRef(_) => unimplemented!(),
             ValueKind::Alloc(_) => {
                 let func_data = program.func(ctx.func.ok_or(AsmError::UnknownFunction)?);
-                let data_type = value_data.ty();
+                let data_type = remove_pointer(value_data.ty().clone());
                 let data_name = value_data
                     .name()
                     .clone()
                     .map(|name| variable_name(&func_data.name(), &name))
                     .unwrap_or(ctx.name_generator.generate_indent_name());
-                let data_size = match data_type.kind() {
-                    TypeKind::Int32 => 4,
-                    TypeKind::Unit => 0,
-                    TypeKind::Array(ty, size) => ty.size() * size,
-                    TypeKind::Pointer(p) => p.size(),
-                    TypeKind::Function(_, _) => 0,
-                };
+                let data_size = data_type.size();
 
                 let offset = ctx.stack_allocator.allocate(data_size as i32);
                 ctx.symbol_table
                     .insert(data_name.clone(), ValueLocation::Stack(offset));
                 Ok(vec![])
-                // TODO: Register allocation.
             }
-            ValueKind::GlobalAlloc(_) => unimplemented!(),
+            ValueKind::GlobalAlloc(_) => {
+                unreachable!("GlobalAlloc should be handled in GlobalValue.")
+            }
             ValueKind::Load(load) => {
                 let (insts, temp_value) = load.to_asm(ctx, program)?;
                 ctx.temp_value_table.insert(*self, temp_value);
                 Ok(insts)
             }
             ValueKind::Store(store) => store.to_asm(ctx, program),
-            ValueKind::GetPtr(_) => unimplemented!(),
-            ValueKind::GetElemPtr(_) => unimplemented!(),
+            ValueKind::GetPtr(get_ptr) => {
+                let (insts, temp_value) = get_ptr.to_asm(ctx, program)?;
+                ctx.temp_value_table.insert(*self, temp_value);
+                Ok(insts)
+            }
+            ValueKind::GetElemPtr(get_elem_ptr) => {
+                let (insts, temp_value) = get_elem_ptr.to_asm(ctx, program)?;
+                ctx.temp_value_table.insert(*self, temp_value);
+                Ok(insts)
+            }
             ValueKind::Binary(binary) => {
                 let (insts, temp_value) = binary.to_asm(ctx, program)?;
                 ctx.temp_value_table.insert(*self, temp_value);
@@ -352,6 +454,133 @@ impl ToAsm for Value {
                 Ok(insts)
             }
             ValueKind::Return(ret) => ret.to_asm(ctx, program),
+        }
+    }
+}
+
+impl ToAsm for GetPtr {
+    type Output = (Vec<Box<dyn Inst>>, ValueLocation);
+    fn to_asm(&self, ctx: &mut Context, program: &Program) -> Result<Self::Output, AsmError> {
+        let src = self.src();
+        let idx = self.index();
+        let src_type = remove_pointer(get_type(src, ctx, program)?);
+        let elem_size = src_type.size();
+
+        let src_loc = ctx.get_location(src, program)?;
+        let (mut insts, src_reg) = ctx.load_value(&src_loc, &[]);
+        let (imm_insts, imm_reg) =
+            ctx.load_value(&ValueLocation::Immediate(elem_size as i32), &[src_reg]);
+        insts.extend(imm_insts);
+        let idx_loc = ctx.get_location(idx, program)?;
+        let (idx_insts, idx_reg) = ctx.load_value(&idx_loc, &[src_reg, imm_reg]);
+        insts.extend(idx_insts);
+        let (temp_reg, alloc_insts) = ctx.allocate_reg(&[src_reg, idx_reg, imm_reg]);
+        insts.extend(alloc_insts);
+
+        if idx_reg != ZERO {
+            insts.push(Box::new(Mul {
+                rd: idx_reg,
+                rs1: imm_reg,
+                rs2: idx_reg,
+            }));
+        }
+        insts.push(Box::new(Add {
+            rd: temp_reg,
+            rs1: src_reg,
+            rs2: idx_reg,
+        }));
+        ctx.deallocate_reg(src_reg);
+        ctx.deallocate_reg(idx_reg);
+        ctx.deallocate_reg(imm_reg);
+        Ok((insts, ValueLocation::Register(temp_reg)))
+    }
+}
+
+impl ToAsm for GetElemPtr {
+    type Output = (Vec<Box<dyn Inst>>, ValueLocation);
+    fn to_asm(&self, ctx: &mut Context, program: &Program) -> Result<Self::Output, AsmError> {
+        let src = self.src();
+        let idx = self.index();
+        let src_type = remove_pointer(get_type(src, ctx, program)?);
+        let elem_size = match src_type.kind() {
+            TypeKind::Array(ty, _) => remove_pointer(ty.clone()).size(),
+            _ => return Err(AsmError::InvalidGetElemPtr),
+        };
+
+        let idx_loc = ctx.get_location(idx, program)?;
+        let (mut insts, idx_reg) = ctx.load_value(&idx_loc, &[]);
+        let (imm_insts, imm_reg) =
+            ctx.load_value(&ValueLocation::Immediate(elem_size as i32), &[idx_reg]);
+        insts.extend(imm_insts);
+        let src_loc = ctx.get_location(src, program)?;
+
+        if is_symbol(src, ctx, program)? {
+            let (res_reg, alloc_insts) = ctx.allocate_reg(&[idx_reg, imm_reg]);
+            insts.extend(alloc_insts);
+            match src_loc {
+                ValueLocation::Stack(offset) => {
+                    if between!(-2048, offset, 2047) {
+                        insts.push(Box::new(Addi {
+                            rd: res_reg,
+                            rs: SP,
+                            imm: offset,
+                        }));
+                    } else {
+                        insts.push(Box::new(LoadImm {
+                            rd: res_reg,
+                            imm: offset,
+                        }));
+                        insts.push(Box::new(Add {
+                            rd: res_reg,
+                            rs1: SP,
+                            rs2: res_reg,
+                        }));
+                    }
+                }
+                ValueLocation::GlobalValue(name) => {
+                    insts.push(Box::new(LoadLabel {
+                        rd: res_reg,
+                        label: name,
+                    }));
+                }
+                _ => return Err(AsmError::InvalidGetElemPtr),
+            };
+            if idx_reg != ZERO {
+                insts.push(Box::new(Mul {
+                    rd: idx_reg,
+                    rs1: imm_reg,
+                    rs2: idx_reg,
+                }));
+            }
+            insts.push(Box::new(Add {
+                rd: res_reg,
+                rs1: res_reg,
+                rs2: idx_reg,
+            }));
+            ctx.deallocate_reg(idx_reg);
+            ctx.deallocate_reg(imm_reg);
+            Ok((insts, ValueLocation::Register(res_reg)))
+        } else {
+            let (src_insts, src_reg) = ctx.load_value(&src_loc, &[idx_reg, imm_reg]);
+            insts.extend(src_insts);
+            let (temp_reg, alloc_insts) = ctx.allocate_reg(&[idx_reg, src_reg, imm_reg]);
+            insts.extend(alloc_insts);
+            if idx_reg != ZERO {
+                insts.push(Box::new(Mul {
+                    rd: idx_reg,
+                    rs1: imm_reg,
+                    rs2: idx_reg,
+                }));
+            }
+            insts.push(Box::new(Add {
+                rd: temp_reg,
+                rs1: src_reg,
+                rs2: idx_reg,
+            }));
+            ctx.deallocate_reg(src_reg);
+            ctx.deallocate_reg(idx_reg);
+            ctx.deallocate_reg(imm_reg);
+            Ok((insts, ValueLocation::Register(temp_reg)))
         }
     }
 }
@@ -405,32 +634,32 @@ impl ToAsm for IRCall {
         }
 
         // Save caller saved registers.
-        let mut caller_saved_registers = ctx.reg_allocator.used_caller_saved_registers();
-        caller_saved_registers.push(RA);
+        let mut caller_saved_reg = ctx.reg_allocator.used_caller_saved_registers();
+        caller_saved_reg.push(RA);
 
         // If the register is used for parameter or return value, we don't need to save it.
         let arg_num = self.args().len();
         for reg in PARAMETER_REGISTERS[..arg_num.min(param_reg_num)].iter() {
-            if let Some(pos) = caller_saved_registers.iter().position(|r| r == reg) {
-                caller_saved_registers.remove(pos);
+            if let Some(pos) = caller_saved_reg.iter().position(|r| r == reg) {
+                caller_saved_reg.remove(pos);
             }
         }
         if !return_type.is_unit() {
-            if let Some(pos) = caller_saved_registers.iter().position(|r| *r == A0) {
-                caller_saved_registers.remove(pos);
+            if let Some(pos) = caller_saved_reg.iter().position(|r| *r == A0) {
+                caller_saved_reg.remove(pos);
             }
         }
 
-        let mut saved_register_offset = vec![];
+        let mut saved_reg_offset = vec![];
 
-        for reg in &caller_saved_registers {
+        for reg in &caller_saved_reg {
             let offset = ctx.stack_allocator.allocate(4);
             insts.push(Box::new(Sw {
                 rs1: *reg,
                 offset,
                 rs2: SP,
             }));
-            saved_register_offset.push(offset);
+            saved_reg_offset.push(offset);
         }
 
         // Call the function.
@@ -439,20 +668,20 @@ impl ToAsm for IRCall {
         }));
 
         // Restore caller saved registers.
-        for (i, reg) in caller_saved_registers.iter().enumerate() {
+        for (i, reg) in caller_saved_reg.iter().enumerate() {
             insts.push(Box::new(Lw {
                 rd: *reg,
-                offset: saved_register_offset[i],
+                offset: saved_reg_offset[i],
                 rs: SP,
             }));
         }
 
+        // Deallocate the stack space for the arguments.
         if arg_num > 1 {
             for reg in &PARAMETER_REGISTERS[1..arg_num.min(param_reg_num)] {
                 ctx.reg_allocator.set_unused(*reg);
             }
         }
-
         if return_type.is_unit() && arg_num >= 1 {
             ctx.reg_allocator.set_unused(A0);
         }
@@ -516,27 +745,81 @@ impl ToAsm for Store {
         let func = ctx.func.ok_or(AsmError::UnknownFunction)?;
         let func_data = program.func(func);
         let value = self.value();
+        let dest = self.dest();
+        let value_data = func_data.dfg().value(value);
+
+        // Aggregate initialize
+        if matches!(
+            value_data.kind(),
+            ValueKind::ZeroInit(_) | ValueKind::Aggregate(_)
+        ) {
+            let dest_data = func_data.dfg().value(dest);
+            let dest_type = remove_pointer(dest_data.ty().clone());
+            let store_value = get_init_array(value_data, &dest_type, func_data);
+            let dest_loc = ctx.get_location(dest, program)?;
+            return match dest_loc {
+                ValueLocation::Stack(offset) => {
+                    let (temp_reg, mut insts) = ctx.allocate_reg(&[]);
+                    for (i, value) in store_value.iter().enumerate() {
+                        let offset = offset + i as i32 * 4;
+                        if *value != 0 {
+                            insts.push(Box::new(LoadImm {
+                                rd: temp_reg,
+                                imm: *value,
+                            }));
+                            insts.push(Box::new(Sw {
+                                rs1: temp_reg,
+                                offset,
+                                rs2: SP,
+                            }));
+                        } else {
+                            insts.push(Box::new(Sw {
+                                rs1: ZERO,
+                                offset,
+                                rs2: SP,
+                            }));
+                        }
+                    }
+                    ctx.deallocate_reg(temp_reg);
+                    Ok(insts)
+                }
+                _ => Err(AsmError::InvalidStore),
+            };
+        }
+
         let store_value = ctx.get_location(value, program)?;
+        let is_symbol = is_symbol(dest, ctx, program)?;
+
+        // A temp value generated by GetElemPtr or GetPtr.
+        if !is_symbol {
+            let dest_loc = ctx.get_location(dest, program)?;
+            let (mut insts, dest_reg) = ctx.load_value(&dest_loc, &[]);
+            let value_loc = ctx.get_location(value, program)?;
+            let (load, value_reg) = ctx.load_value(&value_loc, &[dest_reg]);
+            insts.extend(load);
+            insts.push(Box::new(Sw {
+                rs1: value_reg,
+                offset: 0,
+                rs2: dest_reg,
+            }));
+            return Ok(insts);
+        }
 
         // Get store destination.
-        let is_local_value = func_data.dfg().values().get(&self.dest()).is_some();
+        let is_local_value = func_data.dfg().values().contains_key(&self.dest());
         let dest = if is_local_value {
             func_data
                 .dfg()
-                .value(self.dest())
+                .value(dest)
                 .name()
                 .clone()
                 .map(|name| variable_name(&func_data.name(), &name))
                 .ok_or(AsmError::NoNameStore)?
         } else {
-            program
-                .borrow_value(self.dest())
-                .name()
-                .clone()
-                .map_or_else(
-                    || ctx.name_generator.generate_indent_name(),
-                    |name| name[4..].to_string(),
-                )
+            program.borrow_value(dest).name().clone().map_or_else(
+                || ctx.name_generator.generate_indent_name(),
+                |name| name[4..].to_string(),
+            )
         };
         let dest = ctx
             .symbol_table
@@ -591,7 +874,22 @@ impl ToAsm for Load {
         let func = ctx.func.ok_or(AsmError::UnknownFunction)?;
         let func_data = program.func(func);
         let func_name = func_data.name();
-        let is_local_value = func_data.dfg().values().get(&self.src()).is_some();
+        let is_local_value = func_data.dfg().values().contains_key(&self.src());
+        let is_symbol = is_symbol(self.src(), ctx, program)?;
+        // A temp value generated by GetElemPtr or GetPtr.
+        if !is_symbol {
+            let temp_value = ctx.get_location(self.src(), program)?;
+            let (mut insts, temp_reg) = ctx.load_value(&temp_value, &[]);
+            let (res_reg, alloc_insts) = ctx.allocate_reg(&[temp_reg]);
+            insts.extend(alloc_insts);
+            insts.push(Box::new(Lw {
+                rd: res_reg,
+                offset: 0,
+                rs: temp_reg,
+            }));
+            ctx.deallocate_reg(temp_reg);
+            return Ok((insts, ValueLocation::Register(res_reg)));
+        }
         let name = if is_local_value {
             func_data
                 .dfg()

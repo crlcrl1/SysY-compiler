@@ -315,5 +315,15 @@ impl Into<Type> for DataType {
     }
 }
 
+impl Default for Expr {
+    fn default() -> Self {
+        Expr(Rc::new(LOrExpr::LAndExpr(LAndExpr::EqExpr(
+            EqExpr::RelExpr(RelExpr::AddExpr(AddExpr::MulExpr(MulExpr::UnaryExpr(
+                UnaryExpr::PrimaryExpr(PrimaryExpr::Number(0)),
+            )))),
+        ))))
+    }
+}
+
 #[cfg(test)]
 mod test_ast;

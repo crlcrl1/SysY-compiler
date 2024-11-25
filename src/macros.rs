@@ -30,3 +30,10 @@ macro_rules! add_inst {
             .unwrap()
     };
 }
+
+#[macro_export]
+macro_rules! between {
+    ($min:expr, $val:expr, $max:expr) => {
+        $val >= $min && $val <= $max
+    };
+}

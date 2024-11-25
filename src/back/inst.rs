@@ -1,4 +1,5 @@
-use crate::back::register::Register;
+use crate::back::register::{Register, T0};
+use crate::between;
 use compiler_macro::Inst;
 use concat_idents::concat_idents;
 
@@ -65,21 +66,77 @@ pub struct Call {
 pub struct Ret;
 
 /// Load word
-#[derive(Debug, Clone, Inst, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Lw {
     pub rd: Register,
     pub offset: i32,
     pub rs: Register,
 }
 
+impl Inst for Lw {
+    fn dump(&self) -> String {
+        if between!(-2048, self.offset, 2047) {
+            format!("lw {}, {}({})", self.rd, self.offset, self.rs)
+        } else {
+            let li = LoadImm {
+                rd: self.rd.clone(),
+                imm: self.offset,
+            };
+            let add = Add {
+                rd: self.rd.clone(),
+                rs1: self.rs.clone(),
+                rs2: self.rd.clone(),
+            };
+            let lw = Lw {
+                rd: self.rd.clone(),
+                offset: 0,
+                rs: self.rd.clone(),
+            };
+            format!("{}\n{}\n{}", li.dump(), add.dump(), lw.dump())
+        }
+    }
+
+    fn is_branch(&self) -> bool {
+        false
+    }
+}
+
 /// Store word
 ///
 /// rs1 -> offset(rs2)
-#[derive(Debug, Clone, Inst, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Sw {
     pub rs1: Register,
     pub offset: i32,
     pub rs2: Register,
+}
+
+impl Inst for Sw {
+    fn dump(&self) -> String {
+        if between!(-2048, self.offset, 2047) {
+            format!("sw {}, {}({})", self.rs1, self.offset, self.rs2)
+        } else {
+            let li = LoadImm {
+                rd: T0,
+                imm: self.offset,
+            };
+            let add = Add {
+                rd: T0,
+                rs1: self.rs2.clone(),
+                rs2: T0,
+            };
+            let sw = Sw {
+                rs1: self.rs1.clone(),
+                offset: 0,
+                rs2: T0,
+            };
+            format!("{}\n{}\n{}", li.dump(), add.dump(), sw.dump())
+        }
+    }
+
+    fn is_branch(&self) -> bool {
+        false
+    }
 }
 
 eval_inst_with_imm!(Add);

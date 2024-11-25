@@ -88,6 +88,10 @@ impl Assembly for AsmVarDecl {
         s.push_str(&format!("\t.globl {}\n", self.name));
         s.push_str(&format!("{}:\n", self.name));
         if let Some(init) = &self.init {
+            if init.iter().all(|x| *x == 0) {
+                s.push_str(&format!("\t.zero {}\n", self.size));
+                return s;
+            }
             for (i, val) in init.iter().enumerate() {
                 s.push_str(&format!("\t.word {}\n", val));
                 if i == self.size - 1 {
@@ -95,9 +99,7 @@ impl Assembly for AsmVarDecl {
                 }
             }
         } else {
-            for _ in 0..self.size {
-                s.push_str("\t.word 0\n");
-            }
+            s.push_str(&format!("\t.zero {}\n", self.size));
         }
         s
     }

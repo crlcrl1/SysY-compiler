@@ -1,7 +1,8 @@
 use crate::front::ast::*;
-use crate::front::ident::{Identifier, Type};
+use crate::front::ident::Identifier;
 use crate::front::ir::scope::Scope;
 
+#[derive(Debug)]
 pub enum EvalError {
     DivisionByZero,
     Overflow,
@@ -17,6 +18,12 @@ type EvalResult = Result<i32, EvalError>;
 
 pub trait Eval {
     fn eval(&self, scope: &mut Scope) -> EvalResult;
+}
+
+impl Eval for i32 {
+    fn eval(&self, _: &mut Scope) -> EvalResult {
+        Ok(*self)
+    }
 }
 
 impl Eval for ConstExpr {
@@ -132,7 +139,7 @@ impl Eval for PrimaryExpr {
         match self {
             PrimaryExpr::Expr(expr) => expr.eval(scope),
             PrimaryExpr::LVal(lval) => lval.eval(scope),
-            PrimaryExpr::Number(num) => Ok(*num),
+            PrimaryExpr::Number(num) => num.eval(scope),
         }
     }
 }
@@ -147,20 +154,32 @@ impl Eval for LVal {
     fn eval(&self, scope: &mut Scope) -> EvalResult {
         match self {
             LVal::Var(var) => {
-                if let Some(id) = scope.get_identifier(var) {
-                    let id = id.clone();
-                    match id {
-                        Identifier::Constant(constant) => match constant.const_type {
-                            Type::Normal => Ok(constant.value),
-                            _ => unimplemented!("Array constant"),
-                        },
-                        _ => Err(EvalError::NotSupportedVariable),
-                    }
-                } else {
-                    Err(EvalError::NotSupportedVariable)
+                let id = scope
+                    .get_identifier(var)
+                    .ok_or(EvalError::NotSupportedVariable)?;
+                let id = id.clone();
+                match id {
+                    Identifier::Constant(constant) => Ok(constant.value),
+                    _ => Err(EvalError::NotSupportedVariable),
                 }
             }
-            LVal::ArrayElem(_) => Err(EvalError::NotSupportedVariable),
+            LVal::ArrayElem(array_elem) => {
+                let id = scope
+                    .get_identifier(&array_elem.name)
+                    .ok_or(EvalError::NotSupportedVariable)?
+                    .clone();
+                match id {
+                    Identifier::ConstArray(const_array) => {
+                        let indices = array_elem
+                            .indices
+                            .iter()
+                            .map(|x| x.eval(scope))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        Ok(const_array.values.get_element(&indices))
+                    }
+                    _ => Err(EvalError::NotSupportedVariable),
+                }
+            }
         }
     }
 }

@@ -8,6 +8,7 @@ use util::logger::{show_error, show_parse_error};
 
 mod back;
 mod front;
+pub mod macros;
 mod util;
 
 fn main() {

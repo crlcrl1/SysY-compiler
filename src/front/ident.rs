@@ -1,11 +1,6 @@
 use crate::front::ast::FuncDef;
+use crate::front::ir::initial_list::InitializeList;
 use koopa::ir::Value;
-
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
-pub enum Type {
-    Normal,
-    Array,
-}
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct Variable {
@@ -14,8 +9,13 @@ pub struct Variable {
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct Constant {
-    pub const_type: Type,
     pub value: i32,
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+pub struct ConstArray {
+    pub koopa_def: Value,
+    pub values: InitializeList<i32>,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
@@ -33,6 +33,7 @@ pub struct Function {
 pub enum Identifier {
     Variable(Variable),
     Constant(Constant),
+    ConstArray(ConstArray),
     FunctionParam(FunctionParam),
 }
 
@@ -41,11 +42,12 @@ impl Identifier {
         Identifier::Variable(Variable { koopa_def })
     }
 
-    pub fn from_constant(value: i32, value_type: Type) -> Self {
-        Identifier::Constant(Constant {
-            value,
-            const_type: value_type,
-        })
+    pub fn from_constant(value: i32) -> Self {
+        Identifier::Constant(Constant { value })
+    }
+
+    pub fn from_const_array(koopa_def: Value, values: InitializeList<i32>) -> Self {
+        Identifier::ConstArray(ConstArray { koopa_def, values })
     }
 
     pub fn from_function_param(koopa_def: Value) -> Self {

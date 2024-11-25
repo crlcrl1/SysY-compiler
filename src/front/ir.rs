@@ -1,22 +1,82 @@
 pub mod builtin;
 pub mod context;
 pub mod eval;
-pub mod macros;
+pub mod initial_list;
 pub mod scope;
 
 use crate::front::ast::*;
 use crate::front::ident::Identifier;
-use crate::front::ident::Type as IdentType;
-use crate::front::ir::eval::Eval;
-use crate::front::ir::scope::Scope;
 use crate::util::logger::show_error;
+use crate::util::remove_pointer;
 use crate::{add_bb, add_inst, new_value};
 use context::Context;
+use eval::Eval;
+use initial_list::InitializeList;
 use koopa::ir::builder::{GlobalInstBuilder, LocalInstBuilder, ValueBuilder};
-use koopa::ir::{BinaryOp, FunctionData, Type, Value};
+use koopa::ir::{BinaryOp, FunctionData, Type, TypeKind, Value};
+use scope::Scope;
 use std::rc::Rc;
 
 type Return = Option<Expr>;
+
+fn get_type(value: Value, ctx: &Context) -> Result<Type, ParseError> {
+    let ty = if ctx.func_data().is_ok() && ctx.func_data()?.dfg().values().contains_key(&value) {
+        ctx.func_data()?.dfg().value(value).ty().clone()
+    } else {
+        ctx.program.borrow_value(value).ty().clone()
+    };
+    Ok(ty)
+}
+
+fn get_array_type<T: Eval>(shape: &[T], scope: &mut Scope) -> Type {
+    let mut param_type = Type::get_i32();
+    for i in shape.iter().rev() {
+        let v = i.eval(scope).unwrap_or(0);
+        if v <= 0 {
+            show_error("Array size must be greater than 0", 2);
+        }
+        param_type = Type::get_array(param_type, v as usize);
+    }
+    param_type
+}
+
+fn get_array_pos(array_elem: &ArrayElem, ctx: &mut Context) -> Result<Value, ParseError> {
+    let indices = array_elem
+        .indices
+        .iter()
+        .map(|index| index.generate_ir(ctx))
+        .collect::<Result<Vec<_>, _>>()?;
+    let array = ctx
+        .scope
+        .get_identifier(&array_elem.name)
+        .ok_or(ParseError::UnknownIdentifier)?
+        .clone();
+    let array = match array {
+        Identifier::Variable(var) => var.koopa_def,
+        Identifier::ConstArray(const_array) => const_array.koopa_def,
+        _ => return Err(ParseError::InvalidExpr),
+    };
+
+    // Get offset
+    let mut result = array;
+    for index in &indices {
+        let index = index.clone();
+        let bb = ctx.get_bb()?;
+        let result_type = get_type(result, ctx)?;
+        let result_type = remove_pointer(result_type);
+        let array_elem = if let TypeKind::Pointer(_) = result_type.kind() {
+            let load = new_value!(ctx.func_data_mut()?).load(result);
+            add_inst!(ctx.func_data_mut()?, bb, load);
+            new_value!(ctx.func_data_mut()?).get_ptr(load, index)
+        } else {
+            new_value!(ctx.func_data_mut()?).get_elem_ptr(result, index)
+        };
+        add_inst!(ctx.func_data_mut()?, bb, array_elem);
+        result = array_elem;
+    }
+
+    Ok(result)
+}
 
 #[derive(Debug)]
 pub enum ParseError {
@@ -27,11 +87,20 @@ pub enum ParseError {
     ConstExprError,
     BreakOutsideLoop,
     ContinueOutsideLoop,
+    MultipleDefinition,
 }
 
 pub trait GenerateIR {
     type Output;
     fn generate_ir(&self, ctx: &mut Context) -> Result<Self::Output, ParseError>;
+}
+
+impl GenerateIR for i32 {
+    type Output = Value;
+
+    fn generate_ir(&self, ctx: &mut Context) -> Result<Value, ParseError> {
+        Ok(new_value!(ctx.func_data_mut()?).integer(*self))
+    }
 }
 
 impl GenerateIR for ConstExpr {
@@ -63,11 +132,12 @@ impl GenerateIR for VarDef {
     type Output = Value;
 
     fn generate_ir(&self, ctx: &mut Context) -> Result<Value, ParseError> {
+        let scope_id = ctx.scope.current_scope_id();
         match self {
             VarDef::NormalVarDef(normal_var_def) => {
-                let scope_id = ctx.scope.current_scope_id();
                 let var_name = format!("@_{}_{}", scope_id, normal_var_def.name);
                 if !ctx.is_global() {
+                    // local variable.
                     let bb = ctx.get_bb()?;
                     let func_data = ctx.func_data_mut()?;
                     // allocate variable
@@ -85,16 +155,16 @@ impl GenerateIR for VarDef {
                         let current_bb = ctx.get_bb()?;
                         add_inst!(ctx.func_data_mut()?, current_bb, store);
                     }
+                    // add identifier to scope
                     ctx.scope
                         .add_identifier(
                             normal_var_def.name.clone(),
                             Identifier::from_variable(var_alloc),
                         )
-                        .unwrap_or_else(|e| {
-                            show_error(&format!("{:?}", e), 2);
-                        });
+                        .map_err(|_| ParseError::MultipleDefinition)?;
                     Ok(var_alloc)
                 } else {
+                    // global variable
                     let val = normal_var_def
                         .value
                         .as_ref()
@@ -108,14 +178,69 @@ impl GenerateIR for VarDef {
                             normal_var_def.name.clone(),
                             Identifier::from_variable(var_alloc),
                         )
-                        .unwrap_or_else(|e| {
-                            show_error(&format!("{:?}", e), 2);
-                        });
+                        .map_err(|_| ParseError::MultipleDefinition)?;
                     Ok(var_alloc)
                 }
             }
-            VarDef::ArrayVarDef(_) => {
-                unimplemented!()
+
+            VarDef::ArrayVarDef(array_var) => {
+                let var_name = format!("@_{}_{}", scope_id, array_var.name);
+                let shape = array_var
+                    .shape
+                    .iter()
+                    .map(|x| x.eval(&mut ctx.scope).unwrap_or(0))
+                    .collect::<Vec<_>>();
+
+                if ctx.is_global() {
+                    // global array
+                    let initial_list = if let Some(initial) = &array_var.values {
+                        match initial {
+                            ExprArray::Val(_) => {
+                                show_error("Invalid array initialization", 2);
+                            }
+                            ExprArray::Array(array) => {
+                                InitializeList::from_expr_array(&shape, array, ctx)
+                            }
+                        }
+                    } else {
+                        InitializeList::zero(&shape)
+                    };
+
+                    let init_value = initial_list.to_global_value(ctx);
+                    let alloc = ctx.program.new_value().global_alloc(init_value);
+                    ctx.program.set_value_name(alloc, Some(var_name));
+                    ctx.scope
+                        .add_identifier(array_var.name.clone(), Identifier::from_variable(alloc))
+                        .map_err(|_| ParseError::MultipleDefinition)?;
+
+                    Ok(alloc)
+                } else {
+                    // local array
+                    let array_type = get_array_type(&shape, &mut ctx.scope);
+                    let bb = ctx.get_bb()?;
+                    let func_data = ctx.func_data_mut()?;
+                    let alloc = new_value!(func_data).alloc(array_type);
+                    func_data.dfg_mut().set_value_name(alloc, Some(var_name));
+                    add_inst!(func_data, bb, alloc);
+                    if let Some(initial) = &array_var.values {
+                        let initial_list = match initial {
+                            ExprArray::Val(_) => {
+                                show_error("Invalid array initialization", 2);
+                            }
+                            ExprArray::Array(array) => {
+                                InitializeList::from_expr_array(&shape, array, ctx)
+                            }
+                        };
+                        // Get initial value and store it
+                        let init_value = initial_list.to_local_value(ctx);
+                        let store = new_value!(ctx.func_data_mut()?).store(init_value, alloc);
+                        add_inst!(ctx.func_data_mut()?, bb, store);
+                    }
+                    ctx.scope
+                        .add_identifier(array_var.name.clone(), Identifier::from_variable(alloc))
+                        .map_err(|_| ParseError::MultipleDefinition)?;
+                    Ok(alloc)
+                }
             }
         }
     }
@@ -132,16 +257,57 @@ impl GenerateIR for ConstDef {
                     .eval(&mut ctx.scope)
                     .map_err(|_| ParseError::ConstExprError)?;
                 ctx.scope
-                    .add_identifier(
-                        normal.name.clone(),
-                        Identifier::from_constant(val, IdentType::Normal),
-                    )
+                    .add_identifier(normal.name.clone(), Identifier::from_constant(val))
                     .unwrap_or_else(|e| {
                         show_error(&format!("{:?}", e), 2);
                     });
                 Ok(())
             }
-            ConstDef::ArrayConstDef(_) => unimplemented!(),
+            ConstDef::ArrayConstDef(const_array) => {
+                let init = match &const_array.values {
+                    ConstArray::Val(_) => {
+                        show_error("Invalid array initialization", 2);
+                    }
+                    ConstArray::Array(array) => array,
+                };
+                let initial_list = InitializeList::from_const_array(&const_array.shape, init, ctx);
+
+                // Add const array to IR
+                let scope_id = ctx.scope.current_scope_id();
+                let array_name = format!("@_{}_{}", scope_id, const_array.name);
+
+                let koopa_def = if ctx.is_global() {
+                    let init_value = initial_list.to_global_value(ctx);
+                    let alloc = ctx.program.new_value().global_alloc(init_value);
+                    ctx.program.set_value_name(alloc, Some(array_name));
+                    alloc
+                } else {
+                    let array_type = get_array_type(&const_array.shape, &mut ctx.scope);
+                    let bb = ctx.get_bb()?;
+                    let func_data = ctx.func_data_mut()?;
+                    // allocate array
+                    let alloc = new_value!(func_data).alloc(array_type);
+                    func_data.dfg_mut().set_value_name(alloc, Some(array_name));
+                    add_inst!(func_data, bb, alloc);
+                    // store initial value
+                    let init_value = initial_list.to_local_value(ctx);
+                    let store = new_value!(ctx.func_data_mut()?).store(init_value, alloc);
+                    add_inst!(ctx.func_data_mut()?, bb, store);
+                    alloc
+                };
+
+                // Add const array to identifier table
+                ctx.scope
+                    .add_identifier(
+                        const_array.name.clone(),
+                        Identifier::from_const_array(koopa_def, initial_list),
+                    )
+                    .unwrap_or_else(|e| {
+                        show_error(&format!("{:?}", e), 2);
+                    });
+
+                Ok(())
+            }
         }
     }
 }
@@ -151,6 +317,7 @@ impl GenerateIR for LVal {
 
     fn generate_ir(&self, ctx: &mut Context) -> Result<Value, ParseError> {
         match self {
+            // Normal variable
             LVal::Var(var) => {
                 let ident = ctx
                     .scope
@@ -162,21 +329,51 @@ impl GenerateIR for LVal {
                     Identifier::Variable(ref var) => {
                         let bb = ctx.get_bb()?;
                         let var_def = var.koopa_def;
-                        let load = new_value!(ctx.func_data_mut()?).load(var_def);
-                        add_inst!(ctx.func_data_mut()?, bb, load);
+                        let ty = get_type(var_def, ctx)?;
+                        let ty = remove_pointer(ty);
+                        let load = match ty.kind() {
+                            TypeKind::Array(_, _) => {
+                                let zero = 0.generate_ir(ctx)?;
+                                let load =
+                                    new_value!(ctx.func_data_mut()?).get_elem_ptr(var_def, zero);
+                                add_inst!(ctx.func_data_mut()?, bb, load);
+                                load
+                            }
+                            _ => {
+                                let load = new_value!(ctx.func_data_mut()?).load(var_def);
+                                add_inst!(ctx.func_data_mut()?, bb, load);
+                                load
+                            }
+                        };
                         load
                     }
-                    Identifier::Constant(ref constant) => {
-                        let val = constant.value;
-                        new_value!(ctx.func_data_mut()?).integer(val)
-                    }
+                    Identifier::Constant(ref constant) => constant.value.generate_ir(ctx)?,
                     Identifier::FunctionParam(ref param) => param.koopa_def,
+                    _ => return Err(ParseError::InvalidExpr),
                 };
                 Ok(val)
             }
+            // Array element
+            LVal::ArrayElem(array_elem) => {
+                let pos = get_array_pos(array_elem, ctx)?;
+                let pos_type = ctx.func_data_mut()?.dfg().value(pos).ty().clone();
+                let target_type = remove_pointer(pos_type);
 
-            LVal::ArrayElem(_) => {
-                unimplemented!()
+                match target_type.kind() {
+                    TypeKind::Int32 => {
+                        let load = new_value!(ctx.func_data_mut()?).load(pos);
+                        let bb = ctx.get_bb()?;
+                        add_inst!(ctx.func_data_mut()?, bb, load);
+                        Ok(load)
+                    }
+                    _ => {
+                        let zero = 0.generate_ir(ctx)?;
+                        let load = new_value!(ctx.func_data_mut()?).get_elem_ptr(pos, zero);
+                        let bb = ctx.get_bb()?;
+                        add_inst!(ctx.func_data_mut()?, bb, load);
+                        Ok(load)
+                    }
+                }
             }
         }
     }
@@ -189,10 +386,7 @@ impl GenerateIR for PrimaryExpr {
         match self {
             PrimaryExpr::Expr(expr) => expr.generate_ir(ctx),
             PrimaryExpr::LVal(lval) => lval.generate_ir(ctx),
-            PrimaryExpr::Number(n) => {
-                let func_data = ctx.func_data_mut()?;
-                Ok(new_value!(func_data).integer(*n))
-            }
+            PrimaryExpr::Number(n) => n.generate_ir(ctx),
         }
     }
 }
@@ -343,7 +537,7 @@ impl GenerateIR for LAndExpr {
                     .set_value_name(result, Some(result_name));
                 let current_bb = ctx.get_bb()?;
                 add_inst!(ctx.func_data_mut()?, current_bb, result);
-                let zero = new_value!(ctx.func_data_mut()?).integer(0);
+                let zero = 0.generate_ir(ctx)?;
                 let lhs = new_value!(ctx.func_data_mut()?).binary(BinaryOp::NotEq, lhs, zero);
                 add_inst!(ctx.func_data_mut()?, current_bb, lhs);
                 let store = new_value!(ctx.func_data_mut()?).store(lhs, result);
@@ -363,7 +557,7 @@ impl GenerateIR for LAndExpr {
                 ctx.current_bb = Some(true_bb);
                 let rhs = rhs.generate_ir(ctx)?;
                 let current_bb = ctx.get_bb()?;
-                let zero = new_value!(ctx.func_data_mut()?).integer(0);
+                let zero = 0.generate_ir(ctx)?;
                 let rhs = new_value!(ctx.func_data_mut()?).binary(BinaryOp::NotEq, rhs, zero);
                 add_inst!(ctx.func_data_mut()?, current_bb, rhs);
                 let store = new_value!(ctx.func_data_mut()?).store(rhs, result);
@@ -398,7 +592,7 @@ impl GenerateIR for LOrExpr {
                     .set_value_name(result, Some(result_name));
                 let current_bb = ctx.get_bb()?;
                 add_inst!(ctx.func_data_mut()?, current_bb, result);
-                let zero = new_value!(ctx.func_data_mut()?).integer(0);
+                let zero = 0.generate_ir(ctx)?;
                 let lhs = new_value!(ctx.func_data_mut()?).binary(BinaryOp::NotEq, lhs, zero);
                 add_inst!(ctx.func_data_mut()?, current_bb, lhs);
                 let store = new_value!(ctx.func_data_mut()?).store(lhs, result);
@@ -418,7 +612,7 @@ impl GenerateIR for LOrExpr {
                 ctx.current_bb = Some(false_bb);
                 let rhs = rhs.generate_ir(ctx)?;
                 let current_bb = ctx.get_bb()?;
-                let zero = new_value!(ctx.func_data_mut()?).integer(0);
+                let zero = 0.generate_ir(ctx)?;
                 let rhs = new_value!(ctx.func_data_mut()?).binary(BinaryOp::NotEq, rhs, zero);
                 add_inst!(ctx.func_data_mut()?, current_bb, rhs);
                 let store = new_value!(ctx.func_data_mut()?).store(rhs, result);
@@ -448,6 +642,8 @@ impl GenerateIR for FuncDef {
         let func = ctx.program.new_func(func_data);
         ctx.func_table.insert(self.name.clone(), func);
         ctx.func = Some(func);
+
+        // Restore parameters because they may be modified in function body
         let store_bb = ctx.new_bb()?;
         let func_data = ctx.program.func_mut(func);
         ctx.scope.go_into_scoop(self.body.id);
@@ -462,7 +658,8 @@ impl GenerateIR for FuncDef {
                 .map(|s| s[1..].to_string())
                 .unwrap()
                 .to_string();
-            let alloc_param = new_value!(func_data).alloc(Type::get_i32());
+            let param_type = param_data.ty().clone();
+            let alloc_param = new_value!(func_data).alloc(param_type);
             func_data
                 .dfg_mut()
                 .set_value_name(alloc_param, Some(format!("@_p_{}", param_name)));
@@ -473,6 +670,7 @@ impl GenerateIR for FuncDef {
                 .add_identifier(param_name, Identifier::from_variable(alloc_param))
                 .map_err(|e| show_error(&format!("{:?}", e), 2))?;
         }
+
         self.body.generate_ir(ctx)?;
         ctx.scope.go_out_scoop();
         ctx.func = None;
@@ -701,8 +899,15 @@ impl GenerateIR for Assign {
                 add_inst!(ctx.func_data_mut()?, bb, store);
                 Ok(())
             }
-            LVal::ArrayElem(_) => {
-                unimplemented!()
+            LVal::ArrayElem(ref array_elem) => {
+                let pos = get_array_pos(array_elem, ctx)?;
+
+                // Store value
+                let val = self.value.generate_ir(ctx)?;
+                let store = new_value!(ctx.func_data_mut()?).store(val, pos);
+                let bb = ctx.get_bb()?;
+                add_inst!(ctx.func_data_mut()?, bb, store);
+                Ok(())
             }
         }
     }
@@ -739,16 +944,7 @@ fn get_func_param(params: &Vec<Rc<FuncFParam>>, scope: &mut Scope) -> Vec<(Optio
                 } else {
                     &array_param.shape[1..]
                 };
-                let mut param_type = Type::get_pointer(Type::get_i32());
-                for i in shape.iter().rev() {
-                    let v = i.eval(scope).unwrap_or_else(|_| {
-                        show_error("Array size must be a constant", 2);
-                    });
-                    if v <= 0 {
-                        show_error("Array size must be greater than 0", 2);
-                    }
-                    param_type = Type::get_array(param_type, v as usize);
-                }
+                let param_type = Type::get_pointer(get_array_type(shape, scope));
                 func_params.push((Some("@".to_string() + &array_param.name), param_type));
             }
         }

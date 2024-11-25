@@ -35,6 +35,12 @@ pub enum AsmError {
     UnknownBranchTarget,
     /// The jump target is not set for a jump operation.
     UnknownJumpTarget,
+    /// Invalid global value.
+    InvalidGlobalValue,
+    /// A invalid get element pointer operation.
+    InvalidGetElemPtr,
+    /// A invalid get pointer operation.
+    InvalidGetPtr,
 }
 
 #[derive(Default)]
@@ -459,15 +465,6 @@ impl Context {
             ValueLocation::Register(reg) => (vec![], *reg),
             ValueLocation::Stack(offset) => {
                 let (reg, mut insts) = self.allocate_reg(used_regs);
-                // TODO: Find out why this is wrong!!!
-                // if let Some(symbol) = self.symbol_table.get_symbol_from_loc(value_location) {
-                //     self.symbol_table
-                //         .insert(symbol.to_string(), ValueLocation::Register(reg));
-                // }
-                // if let Some(temp_val) = self.temp_value_table.get_val_from_loc(value_location) {
-                //     self.temp_value_table
-                //         .insert(temp_val, ValueLocation::Register(reg));
-                // }
                 insts.push(Box::new(Lw {
                     rd: reg,
                     offset: *offset,
@@ -542,23 +539,32 @@ impl Context {
     pub fn get_location(&self, value: Value, program: &Program) -> Result<ValueLocation, AsmError> {
         let func = self.func.ok_or(AsmError::UnknownFunction)?;
         let func_data = program.func(func);
-        let value_data = func_data.dfg().value(value);
-        if let ValueKind::Integer(c) = value_data.kind() {
-            Ok(ValueLocation::Immediate(c.value()))
+        let is_global = !func_data.dfg().values().contains_key(&value);
+        let value_data = if is_global {
+            program.borrow_value(value).clone()
         } else {
-            // If the value is a temp value, get the location from the temp value table.
-            let temp_val = self.temp_value_table.get(&value).cloned();
-            if let Some(temp_val) = temp_val {
-                Ok(temp_val)
-            } else {
-                // Otherwise, get the location from the symbol table.
-                let value_name = value_data.name().as_ref().unwrap();
-                // let value_name = value_data.name().as_ref().ok_or(AsmError::NoTempValue)?;
-                let name = variable_name(func_data.name(), value_name);
-                self.symbol_table
-                    .get(&name)
-                    .cloned()
-                    .ok_or(AsmError::NoSymbol)
+            func_data.dfg().value(value).clone()
+        };
+        match value_data.kind() {
+            ValueKind::Integer(c) => Ok(ValueLocation::Immediate(c.value())),
+            _ => {
+                // If the value is a temp value, get the location from the temp value table.
+                let temp_val = self.temp_value_table.get(&value).cloned();
+                if let Some(temp_val) = temp_val {
+                    Ok(temp_val)
+                } else {
+                    // Otherwise, get the location from the symbol table.
+                    let value_name = value_data.name().as_ref().unwrap();
+                    let name = if is_global {
+                        value_name[4..].to_string()
+                    } else {
+                        variable_name(func_data.name(), value_name)
+                    };
+                    self.symbol_table
+                        .get(&name)
+                        .cloned()
+                        .ok_or(AsmError::NoSymbol)
+                }
             }
         }
     }
