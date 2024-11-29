@@ -28,7 +28,7 @@ fn main() {
             .generate_on(&program)
             .unwrap();
     }
-    if params.riscv {
+    if params.riscv || params.perf {
         let asm = back::generate_asm(program);
         fs::write(&params.output, asm).unwrap();
     }
