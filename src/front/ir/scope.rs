@@ -36,13 +36,6 @@ impl Scope {
             .find_map(|(_, identifiers)| identifiers.get(name))
     }
 
-    pub fn get_identifier_mut(&mut self, name: &str) -> Option<&mut Identifier> {
-        self.stack
-            .iter_mut()
-            .rev()
-            .find_map(|(_, identifiers)| identifiers.get_mut(name))
-    }
-
     pub fn add_identifier(&mut self, name: String, identifier: Identifier) -> Result {
         let scope_id = self.current_scope_id();
         let (_, identifiers) = self.stack.last_mut().unwrap();

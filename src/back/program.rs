@@ -123,28 +123,6 @@ impl AsmFunc {
         self.body.first_mut().unwrap()
     }
 
-    pub fn blocks(&self) -> &[AsmBlock] {
-        &self.body
-    }
-
-    pub fn block(&self, name: &str) -> Option<&AsmBlock> {
-        for block in &self.body {
-            if block.name == name {
-                return Some(block);
-            }
-        }
-        None
-    }
-
-    pub fn block_mut(&mut self, name: &str) -> Option<&mut AsmBlock> {
-        for block in &mut self.body {
-            if block.name == name {
-                return Some(block);
-            }
-        }
-        None
-    }
-
     pub fn blocks_mut(&mut self) -> &mut [AsmBlock] {
         &mut self.body
     }
@@ -173,10 +151,6 @@ impl AsmBlock {
             name,
             items: Vec::new(),
         }
-    }
-
-    pub fn add_inst<T: Inst + 'static>(&mut self, inst: T) {
-        self.items.push(Box::new(inst));
     }
 
     pub fn add_inst_before_branch<T: Inst + 'static>(&mut self, inst: T) {

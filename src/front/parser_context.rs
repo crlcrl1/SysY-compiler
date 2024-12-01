@@ -22,10 +22,6 @@ impl BlockIdGenerator {
         self.id_stack[self.id_stack.len() - 1]
     }
 
-    pub fn get_next_id(&self) -> i32 {
-        self.max_id + 1
-    }
-
     pub fn pop(&mut self) {
         self.id_stack.pop();
     }

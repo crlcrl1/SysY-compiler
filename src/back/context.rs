@@ -19,8 +19,6 @@ pub fn variable_name(func_name: &str, var_name: &str) -> String {
 pub enum AsmError {
     /// Function is not set in the current context.
     UnknownFunction,
-    /// Temp value is not set for a binary operation.
-    NoTempValue,
     /// Name is not set for a load operation.
     NoNameLoad,
     /// No symbol is found in the symbol table.
@@ -37,10 +35,8 @@ pub enum AsmError {
     UnknownJumpTarget,
     /// Invalid global value.
     InvalidGlobalValue,
-    /// A invalid get element pointer operation.
+    /// An invalid get element pointer operation.
     InvalidGetElemPtr,
-    /// A invalid get pointer operation.
-    InvalidGetPtr,
 }
 
 #[derive(Default)]
@@ -249,14 +245,6 @@ impl RegisterAllocator {
 
     pub fn get_callee_saved_register_offset(&self, reg: Register) -> Option<i32> {
         self.callee_saved_registers.get(&reg).map(|r| r.1)
-    }
-
-    pub fn used_registers(&self) -> Vec<(Register, Option<i32>)> {
-        self.used
-            .iter()
-            .filter(|(_, (used, _))| *used)
-            .map(|(reg, offset)| (*reg, offset.1))
-            .collect()
     }
 }
 
