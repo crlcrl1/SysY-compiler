@@ -34,7 +34,6 @@ pub enum Identifier {
     Variable(Variable),
     Constant(Constant),
     ConstArray(ConstArray),
-    FunctionParam(FunctionParam),
 }
 
 impl Identifier {
@@ -50,14 +49,10 @@ impl Identifier {
         Identifier::ConstArray(ConstArray { koopa_def, values })
     }
 
-    pub fn from_function_param(koopa_def: Value) -> Self {
-        Identifier::FunctionParam(FunctionParam { koopa_def })
-    }
-
     pub fn koopa_def(&self) -> Option<Value> {
         match self {
             Identifier::Variable(var) => Some(var.koopa_def),
-            Identifier::FunctionParam(param) => Some(param.koopa_def),
+            Identifier::ConstArray(arr) => Some(arr.koopa_def),
             _ => None,
         }
     }

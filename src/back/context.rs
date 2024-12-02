@@ -19,8 +19,6 @@ pub fn variable_name(func_name: &str, var_name: &str) -> String {
 pub enum AsmError {
     /// Function is not set in the current context.
     UnknownFunction,
-    /// Name is not set for a load operation.
-    NoNameLoad,
     /// No symbol is found in the symbol table.
     NoSymbol,
     /// No name is set for a store operation.

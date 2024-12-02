@@ -173,10 +173,6 @@ impl AsmBlock {
         self.items.splice(pos..pos, insts);
     }
 
-    pub fn insts(&self) -> &[Box<dyn Inst>] {
-        &self.items
-    }
-
     pub fn contains<T: Inst>(&self, inst: &T) -> Option<usize> {
         for (i, item) in self.items.iter().enumerate() {
             if item.dump().eq(&inst.dump()) {

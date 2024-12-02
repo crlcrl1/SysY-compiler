@@ -348,7 +348,6 @@ impl GenerateIR for LVal {
                         load
                     }
                     Identifier::Constant(ref constant) => constant.value.generate_ir(ctx)?,
-                    Identifier::FunctionParam(ref param) => param.koopa_def,
                     _ => return Err(ParseError::InvalidExpr),
                 };
                 Ok(val)
