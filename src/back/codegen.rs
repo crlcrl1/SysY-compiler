@@ -880,6 +880,47 @@ impl ToAsm for Binary {
         let rhs = self.rhs();
         let mut insts: Vec<Box<dyn Inst>> = vec![];
 
+        fn generate_with_imm(
+            lhs: Value,
+            rhs: Value,
+            op: BinaryOp,
+            ctx: &mut Context,
+            program: &Program,
+        ) -> Option<(Vec<Box<dyn Inst>>, ValueLocation)> {
+            let mut insts: Vec<Box<dyn Inst>> = vec![];
+            if let Some(imm) = imm12(rhs, ctx, program) {
+                if has_imm(op) {
+                    let lhs_loc = ctx.get_location(lhs, program).ok()?;
+                    let (load_lhs, rs) = ctx.load_value(&lhs_loc, &[]);
+                    let (rd, temp_inst) = ctx.allocate_reg(&[rs]);
+                    insts.extend(load_lhs);
+                    insts.extend(temp_inst);
+                    let cal_inst: Box<dyn Inst> = match op {
+                        BinaryOp::Add => Box::new(Addi { rd, rs, imm }),
+                        BinaryOp::Or => Box::new(Ori { rd, rs, imm }),
+                        BinaryOp::And => Box::new(Andi { rd, rs, imm }),
+                        BinaryOp::Xor => Box::new(Xori { rd, rs, imm }),
+                        _ => unreachable!(),
+                    };
+                    insts.push(cal_inst);
+                    ctx.deallocate_reg(rs);
+                    Some((insts, ValueLocation::Register(rd)))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+
+        if let Some(res) = generate_with_imm(self.lhs(), self.rhs(), self.op(), ctx, program) {
+            return Ok(res);
+        }
+
+        if let Some(res) = generate_with_imm(self.rhs(), self.lhs(), self.op(), ctx, program) {
+            return Ok(res);
+        }
+
         let lhs_loc = ctx.get_location(lhs, program)?;
         let (load_lhs, lhs_reg) = ctx.load_value(&lhs_loc, &[]);
 
@@ -923,7 +964,6 @@ impl ToAsm for Binary {
                     Box::new(SetZero { rd, rs: rd }),
                 ]
             }
-            // TODO: Optimize for immediate values.
             BinaryOp::Add => vec![Box::new(Add { rd, rs1, rs2 })],
             BinaryOp::Sub => vec![Box::new(Sub { rd, rs1, rs2 })],
             BinaryOp::Mul => vec![Box::new(Mul { rd, rs1, rs2 })],
@@ -972,5 +1012,28 @@ impl ToAsm for Return {
         }
         insts.push(Box::new(Ret));
         Ok(insts)
+    }
+}
+
+fn imm12(value: Value, ctx: &mut Context, program: &Program) -> Option<i32> {
+    let func = ctx.func?;
+    let func_data = program.func(func);
+    let value_data = func_data.dfg().value(value);
+    match value_data.kind() {
+        ValueKind::Integer(n) => {
+            if between!(-2048, n.value(), 2047) {
+                Some(n.value())
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn has_imm(op: BinaryOp) -> bool {
+    match op {
+        BinaryOp::Add | BinaryOp::Or | BinaryOp::And | BinaryOp::Xor => true,
+        _ => false,
     }
 }
