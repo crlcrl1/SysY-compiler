@@ -10,6 +10,7 @@ use lalrpop_util::lalrpop_mod;
 pub mod ast;
 pub mod ident;
 pub mod ir;
+pub mod opt;
 pub mod parser_context;
 
 lalrpop_mod!(pub parser);

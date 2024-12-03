@@ -1,4 +1,5 @@
 use crate::front::generate_ir;
+use crate::front::opt::opt;
 use front::parser;
 use front::parser_context::ParserContext;
 use koopa::back::KoopaGenerator;
@@ -21,12 +22,15 @@ fn main() {
     let comp_unit = parser
         .parse(&mut context, &input)
         .unwrap_or_else(|e| show_parse_error(e, &input, &params.input));
-    let program = generate_ir(comp_unit);
+    let mut program = generate_ir(comp_unit);
     if params.koopa {
         KoopaGenerator::from_path(&params.output)
             .unwrap()
             .generate_on(&program)
             .unwrap();
+    }
+    if params.perf {
+        opt(&mut program);
     }
     if params.riscv || params.perf {
         let asm = back::generate_asm(program);

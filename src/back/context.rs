@@ -21,8 +21,6 @@ pub enum AsmError {
     UnknownFunction,
     /// No symbol is found in the symbol table.
     NoSymbol,
-    /// No name is set for a store operation.
-    NoNameStore,
     /// Invalid store operation(Store a value to an immediate value or a parameter).
     InvalidStore,
     /// No basic block is set in the current context.
