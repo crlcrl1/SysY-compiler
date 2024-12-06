@@ -895,14 +895,22 @@ impl ToAsm for Binary {
                     let (rd, temp_inst) = ctx.allocate_reg(&[rs]);
                     insts.extend(load_lhs);
                     insts.extend(temp_inst);
-                    let cal_inst: Box<dyn Inst> = match op {
-                        BinaryOp::Add => Box::new(Addi { rd, rs, imm }),
-                        BinaryOp::Or => Box::new(Ori { rd, rs, imm }),
-                        BinaryOp::And => Box::new(Andi { rd, rs, imm }),
-                        BinaryOp::Xor => Box::new(Xori { rd, rs, imm }),
+                    let cal_inst: Vec<Box<dyn Inst>> = match op {
+                        BinaryOp::Add => vec![Box::new(Addi { rd, rs, imm })],
+                        BinaryOp::Or => vec![Box::new(Ori { rd, rs, imm })],
+                        BinaryOp::And => vec![Box::new(Andi { rd, rs, imm })],
+                        BinaryOp::Xor => vec![Box::new(Xori { rd, rs, imm })],
+                        BinaryOp::Eq => vec![
+                            Box::new(Xori { rd, rs, imm }),
+                            Box::new(SetZero { rd, rs: rd }),
+                        ],
+                        BinaryOp::NotEq => vec![
+                            Box::new(Xori { rd, rs, imm }),
+                            Box::new(SetNonZero { rd, rs: rd }),
+                        ],
                         _ => unreachable!(),
                     };
-                    insts.push(cal_inst);
+                    insts.extend(cal_inst);
                     ctx.deallocate_reg(rs);
                     Some((insts, ValueLocation::Register(rd)))
                 } else {
@@ -1033,7 +1041,12 @@ fn imm12(value: Value, ctx: &mut Context, program: &Program) -> Option<i32> {
 
 fn has_imm(op: BinaryOp) -> bool {
     match op {
-        BinaryOp::Add | BinaryOp::Or | BinaryOp::And | BinaryOp::Xor => true,
+        BinaryOp::Add
+        | BinaryOp::Or
+        | BinaryOp::And
+        | BinaryOp::Xor
+        | BinaryOp::Eq
+        | BinaryOp::NotEq => true,
         _ => false,
     }
 }
